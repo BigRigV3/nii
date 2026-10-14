@@ -1,3 +1,4 @@
+local CinnamonConfigLoading = false
 local CinnamonEnvironment = getgenv()
 if CinnamonEnvironment.__cinnamon_initializing then
     error("Cinnamon is already initializing", 0)
@@ -52,6 +53,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             Group.Entries[#Group.Entries + 1] = Entry
             if not Group.Connection then
                 Group.Connection = Signal:Connect(function(Delta)
+                    if CinnamonConfigLoading then return end
                     Delta = Delta or 0
                     local Entries = Group.Entries
                     local Count = #Entries
@@ -1358,7 +1360,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
 
             if not Success then
                 self.LastCallbackError = Result
-                return false
+                return false, Result
             end
 
             return Success
@@ -1635,14 +1637,31 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             return true
         end
         Library.LoadConfig = function(self, Config)
-            local Decoded = HttpService:JSONDecode(Config)
+            if self.ConfigLoading or CinnamonConfigLoading then return false, "A config is already loading" end
+            local Parsed, Decoded = pcall(HttpService.JSONDecode, HttpService, Config)
+            if not Parsed then return false, tostring(Decoded) end
+            if type(Decoded) ~= "table" then return false, "Config must contain a JSON object" end
+            for Key in pairs(Decoded) do
+                if type(Key) ~= "string" then return false, "Config must contain a JSON object" end
+            end
             self.ConfigLoading, self.ConfigWork = true, {}
+            CinnamonConfigLoading = true
+            local SliceStart, SliceCount = os.clock(), 0
+            local function YieldConfigWork()
+                SliceCount += 1
+                if SliceCount >= 16 or os.clock() - SliceStart >= 0.004 then
+                    task.wait()
+                    SliceStart, SliceCount = os.clock(), 0
+                end
+                if self.Unloaded then error("Menu was unloaded while loading config", 0) end
+            end
 
             local Success, Result = Library:SafeCall(function()
                 if not ConfigValuesEqual(self.Flags.CustomHitsoundIds, Decoded.CustomHitsoundIds or {}) then
                     Library:SetCustomHitsoundIds(Decoded.CustomHitsoundIds or {})
                 end
                 for Index, Value in Decoded do 
+                    YieldConfigWork()
                     if Index == "CustomHitsoundIds" then continue end
                     local SetFunction = Library.SetFlags[Index]
 
@@ -1663,7 +1682,13 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             self.ConfigLoading = false
             local Work = self.ConfigWork
             self.ConfigWork = nil
-            for _, Callback in pairs(Work) do self:SafeCall(Callback) end
+            for _, Callback in pairs(Work) do
+                if self.Unloaded then break end
+                local OK, Error = self:SafeCall(Callback)
+                if not OK then Success, Result = false, Error end
+                task.wait()
+            end
+            CinnamonConfigLoading = false
             return Success, Result
         end
 
@@ -9179,7 +9204,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 end
                  
                 local ToolCharacter, CurrentTool, WeaponImage, NextToolUpdate = nil, "none", nil, 0
-                local LastNameDistance, LastNameFriend, LastNameColor, LastNameLabel, LastNameExiting
+                local LastNameDistance, LastNameFriend, LastNameColor, LastNameLabel, LastNameExiting, LastNameCinnamon
                 local LastWeaponTextTool, LastWeaponTextColor, LastWeaponTextEnabled, LastBottomDistance
                 local InventoryText, InventoryCharacter, InventoryProvider, NextInventoryUpdate = nil, nil, nil, 0
                 local LabelFont, LabelSize
@@ -9408,6 +9433,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                                             and math.floor(Dist) or false
                                         local NameFriend = ESP.Options.Friendcheck and IsFriend() or false
                                         local NameColor = NameFriend and ESP.Options.FriendcheckRGB or false
+                                        local Presence = Library and Library.CinnamonPresence
+                                        local NameCinnamon = not IsNPC and Presence and Presence:IsUser(plr) or false
                                         local IsExiting = false
                                         if not IsNPC and plr then
                                             local ReplicatedPlayers = ReplicatedStorage:FindFirstChild("Players")
@@ -9419,15 +9446,18 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                                             IsExiting = type(ExitValue) == "number" and ExitValue >= 0
                                         end
                                         if NameDistance ~= LastNameDistance or NameFriend ~= LastNameFriend
-                                            or NameColor ~= LastNameColor or LabelName ~= LastNameLabel or IsExiting ~= LastNameExiting then
+                                            or NameColor ~= LastNameColor or LabelName ~= LastNameLabel or IsExiting ~= LastNameExiting
+                                            or NameCinnamon ~= LastNameCinnamon then
                                             local Suffix = NameDistance and string.format(" [%d meters]", NameDistance) or ""
+                                            local CinnamonSuffix = NameCinnamon and ' <font color="rgb(234, 173, 173)">[Cinnamon user]</font>' or ""
                                             local ExitSuffix = IsExiting and ' <font color="rgb(255, 190, 80)">[EXITING]</font>' or ""
                                             if NameFriend then
-                                                Set(Name, "Text", string.format('(<font color="rgb(%d, %d, %d)">F</font>) %s', NameColor.R * 255, NameColor.G * 255, NameColor.B * 255, LabelName) .. ExitSuffix .. Suffix)
+                                                Set(Name, "Text", string.format('(<font color="rgb(%d, %d, %d)">F</font>) %s', NameColor.R * 255, NameColor.G * 255, NameColor.B * 255, LabelName) .. CinnamonSuffix .. ExitSuffix .. Suffix)
                                             else
-                                                Set(Name, "Text", LabelName .. ExitSuffix .. Suffix)
+                                                Set(Name, "Text", LabelName .. CinnamonSuffix .. ExitSuffix .. Suffix)
                                             end
                                             LastNameDistance, LastNameFriend, LastNameColor, LastNameLabel, LastNameExiting = NameDistance, NameFriend, NameColor, LabelName, IsExiting
+                                            LastNameCinnamon = NameCinnamon
                                         end
                                         Set(Name, "Position", UDim2.new(0, Pos.X, 0, Pos.Y - h / 2 - 9))
                                     end
@@ -15968,6 +15998,30 @@ end
         function Presence:IsUser(Player)
             return self.Enabled and os.clock() - self.Updated < 90 and self.Users[Player.UserId] == true
         end
+        local ChatService = game:GetService("TextChatService")
+        local ReadCallback = getcallbackvalue or getcallbackmember
+        local PreviousChatCallback, ChatCallback
+        local CanReadChat, ExistingChatCallback = pcall(function()
+            if ReadCallback then return ReadCallback(ChatService, "OnIncomingMessage") end
+            return ChatService.OnIncomingMessage
+        end)
+        if CanReadChat then
+            PreviousChatCallback = ExistingChatCallback
+            ChatCallback = function(Message)
+                local Properties = PreviousChatCallback and PreviousChatCallback(Message) or nil
+                local Source = Message.TextSource
+                local Player = Source and Players:GetPlayerByUserId(Source.UserId)
+                if Alive and Player and Presence:IsUser(Player) then
+                    Properties = Properties or Instance.new("TextChatMessageProperties")
+                    local Prefix = Properties.PrefixText
+                    if Prefix == "" then Prefix = Message.PrefixText end
+                    Properties.PrefixText = '<font color="rgb(234, 173, 173)">[Cinnamon user]</font> ' .. Prefix
+                end
+                return Properties
+            end
+            local Installed = pcall(function() ChatService.OnIncomingMessage = ChatCallback end)
+            if not Installed then ChatCallback = nil end
+        end
         function Presence:SetEnabled(Value)
             self.Generation += 1
             self.Enabled, self.NextUpdate, self.Updated = Value == true, 0, 0
@@ -15997,6 +16051,12 @@ end
         UnloadCallbacks[#UnloadCallbacks + 1] = function()
             Presence:SetEnabled(false)
             Connection:Disconnect()
+            if ChatCallback then
+                pcall(function()
+                    local Current = ReadCallback and ReadCallback(ChatService, "OnIncomingMessage") or ChatService.OnIncomingMessage
+                    if Current == ChatCallback then ChatService.OnIncomingMessage = PreviousChatCallback end
+                end)
+            end
         end
     end
     local ServerPage = Page:SubPage({Name = "Servers", Columns = 1})
@@ -16148,7 +16208,7 @@ end
         local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
         local Distance = Root and LocalRoot and tostring(math.floor((Root.Position - LocalRoot.Position).Magnitude / GameUnitsPerMeter + 0.5)) .. " meters" or "No character"
         Row.Title.Text = Player.DisplayName .. " (@" .. Player.Name .. ")"
-            .. (Presence:IsUser(Player) and " [Cinnamon]" or "")
+            .. (Presence:IsUser(Player) and " [Cinnamon user]" or "")
         Row.Title.TextColor3 = Player == LocalPlayer and Library.Theme.Accent or Library.Theme.Text
         Row.Subtitle.Text = "ID " .. Player.UserId .. "  |  " .. Player.AccountAge .. " days  |  " .. (Player.Team and Player.Team.Name or "No team")
         Row.Stats.Text = (Humanoid and tostring(math.floor(Humanoid.Health + 0.5)) .. " HP" or "Unknown HP") .. "  |  " .. Distance
@@ -25044,7 +25104,8 @@ end
         end
     end
 
-    if Library.AutoloadConfig then
+    if Library.AutoloadConfig and not (LoaderTransition and LoaderTransition.SkipAutoload) then
+        ReportLoadingProgress(0.95, "Loading saved config…")
         local Success, Error = pcall(function()
             local Loaded, Result = Library:LoadConfig(readfile(Library.Folders.Configs .. "/" .. Library.AutoloadConfig))
             assert(Loaded, tostring(Result or "Could not apply config"))
