@@ -25367,5 +25367,5 @@ end, function(Message)
     return type(Trace) == "function" and Trace(tostring(Message), 2) or tostring(Message)
 end)
 CinnamonEnvironment.__cinnamon_initializing = nil
-if not CinnamonSuccess then error(CinnamonResult, 0) ewnd
+if not CinnamonSuccess then error(CinnamonResult, 0) end
 return CinnamonResult
