@@ -4869,13 +4869,25 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     Keybind.Mode = "Toggle"
                     Keybind:SetMode("Toggle")
                 end)
+                Items["Toggle"]:Connect("MouseButton2Down", function()
+                    Keybind.Mode = "Toggle"
+                    Keybind:SetMode("Toggle")
+                end)
 
                 Items["Hold"]:Connect("MouseButton1Down", function()
                     Keybind.Mode = "Hold"
                     Keybind:SetMode("Hold")
                 end)
+                Items["Hold"]:Connect("MouseButton2Down", function()
+                    Keybind.Mode = "Hold"
+                    Keybind:SetMode("Hold")
+                end)
 
                 Items["Always"]:Connect("MouseButton1Down", function()
+                    Keybind.Mode = "Always"
+                    Keybind:SetMode("Always")
+                end)
+                Items["Always"]:Connect("MouseButton2Down", function()
                     Keybind.Mode = "Always"
                     Keybind:SetMode("Always")
                 end)
@@ -20734,7 +20746,7 @@ end
         local Project = workspace.CurrentCamera and workspace.CurrentCamera.WorldToViewportPoint
         local S = {Enabled = false, HitChance = 100, OnlyModsOff = false, Drop = true, Lead = true, Spread = true,
             NPCs = false, Bone = "Closest to crosshair", FOV = 180, Distance = 3000, Radius = 7,
-            Lock = false, LockHeld = false, Smoothing = 0.12, ShowFOV = false, VisCheck = true,
+            Lock = false, LockHeld = false, StickyTarget = false, Smoothing = 0.12, ShowFOV = false, VisCheck = true,
             SmoothingMode = "Adaptive", TrackingSmoothing = 0.025, TrackingRadius = 1.5, MotionFollow = 75,
             MaxAimSpeed = 360, Humanise = true, HumanStrength = 20, HitboxHysteresis = 8,
             RandomInterval = 0.8, RandomParts = {"Head", "Torso"}, ExcludedHitboxes = {}, ReactionTime = 0.025,
@@ -20891,6 +20903,22 @@ end
                 if not Part or Score > Best then return end
                 Best, BestTarget, BestPart, BestPoint = Score, Character, Part, Point
                 return true
+            end
+            local StickyEligible = false
+            if S.StickyTarget and self.Target then
+                local Owner = Players:GetPlayerFromCharacter(self.Target)
+                if Owner and Owner ~= Player then
+                    for _, Candidate in ipairs(Combat:GetPlayerTargets()) do
+                        if Candidate == Owner then StickyEligible = true; break end
+                    end
+                elseif S.NPCs and Combat.NPCController then
+                    StickyEligible = Combat:GetNPCTargets()[self.Target] ~= nil
+                end
+            end
+            if StickyEligible and Consider(self.Target) then
+                self.Target, self.Part, self.TargetPoint = BestTarget, BestPart, BestPoint
+                self.TargetOffset = BestPart.CFrame:PointToObjectSpace(BestPoint)
+                return
             end
             for _, Candidate in ipairs(Combat:GetPlayerTargets()) do
                 if Candidate ~= Player then Consider(Candidate.Character) end
@@ -24537,6 +24565,7 @@ end
                 Min = 0, Max = 100, Decimals = 1, Suffix = "%",
                 Callback = function(Value) Legit.HitChance = Value end})
             LegitToggle("Vischeck", "VisCheck", "LegitAimVisCheck")
+            LegitToggle("Sticky target", "StickyTarget", "LegitAimStickyTarget")
             LegitToggle("Lock onto aim circle", "Lock", "LegitAimLock"):Keybind({
                 Flag = "LegitAimLockKeybind", Default = Enum.UserInputType.MouseButton2, Mode = "Hold",
                 Callback = function(Value) Legit.LockHeld = Value end})
