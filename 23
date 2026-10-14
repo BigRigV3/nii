@@ -16074,14 +16074,18 @@ end
         local Left = Players.PlayerRemoving:Connect(function(Player)
             Presence.Users[Player.UserId] = nil
         end)
-        local PresencePage = Page:SubPage({Name = "Cinnamon users", Columns = 1})
-        local Controls = PresencePage:Section({Name = "Cinnamon users", Side = 1})
-        Controls:Label("Share your presence and see Cinnamon users in this server")
-        Controls:Toggle({Name = "Cinnamon presence", Flag = "CinnamonPresenceEnabled", Default = false,
-            Callback = function(Value) Presence:SetEnabled(Value) end})
-        local Status = Controls:Label("Presence disabled")
+        local Status
+        function Presence:BuildSettingsPage(SettingsPage)
+            local PresencePage = SettingsPage:SubPage({Name = "Cinnamon users", Columns = 1})
+            local Controls = PresencePage:Section({Name = "Cinnamon users", Side = 1})
+            Controls:Label("Share your presence and see Cinnamon users in this server")
+            Controls:Toggle({Name = "Cinnamon presence", Flag = "CinnamonPresenceEnabled", Default = true,
+                Callback = function(Value) Presence:SetEnabled(Value) end})
+            Status = Controls:Label("Presence disabled")
+        end
         local Connection = ConnectScheduled(game:GetService("RunService").Heartbeat, function()
             Poll()
+            if not Status then return end
             local Count = 0
             for _, Player in ipairs(Players:GetPlayers()) do
                 if Player ~= LocalPlayer and Presence:IsUser(Player) then Count += 1 end
@@ -18586,6 +18590,7 @@ end
         local OtherPage = BuildOtherPages(Window, Library, UnloadCallbacks, InventoryValues, ItemValues)
         local CustomPage = Window:Page({Name = "Skinchanger", Columns = 2})
         local SettingsPage = Library:CreateSettingsPage(Window, Watermark, KeybindList)
+        Library.CinnamonPresence:BuildSettingsPage(SettingsPage)
         ReportLoadingProgress(0.53, "Preparing combat controls?")
         local CombatController = CreateCombatController(Library, UnloadCallbacks, nil, CreateFOVCircle)
         local CreateNPCController = (function()
