@@ -824,6 +824,16 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 return Dragging
             end
 
+            Instances.PlaceSubElements = function(self, Label, LeftOffset)
+                local function UpdatePosition()
+                    if Library.Unloaded or not self.Instance.Parent then return end
+                    self.Instance.Position = UDim2New(0, LeftOffset + math.ceil(Label.Instance.TextBounds.X) + 14, 0, 0)
+                end
+                Library:Connect(Label.Instance:GetPropertyChangedSignal("TextBounds"), UpdatePosition)
+                UpdatePosition()
+                task.defer(UpdatePosition)
+            end
+
             Instances.MakeResizeable = function(self, Minimum, Maximum)
                 if not self.Instance then 
                     return
@@ -2452,6 +2462,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
 
                 end
                 
+                Items["SubElements"]:PlaceSubElements(Items["Text"], 22)
+
                 function Toggle:Get()
                     return Toggle.Value 
                 end
@@ -2935,6 +2947,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         SortOrder = Enum.SortOrder.LayoutOrder
                     })
                 end
+
+                Items["SubElements"]:PlaceSubElements(Items["Text"], 0)
 
                 function Label:SetText(Text)
                     Text = tostring(Text)
@@ -4654,6 +4668,16 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         end
                         local Picked = Input.UserInputType == Enum.UserInputType.Keyboard
                             and Input.KeyCode or Input.UserInputType
+                        if Input.UserInputType ~= Enum.UserInputType.Keyboard
+                            and Input.UserInputType ~= Enum.UserInputType.MouseButton1
+                            and Input.UserInputType ~= Enum.UserInputType.MouseButton2
+                            and Input.UserInputType ~= Enum.UserInputType.MouseButton3 then return end
+                        if Picked == Enum.KeyCode.Escape then
+                            Keybind.Picking = false
+                            Items["KeyButton"].Instance.Text = Keybind.Value
+                            Capture.Connection:Disconnect()
+                            return
+                        end
                         Keybind:Set(Picked)
                         Capture.Connection:Disconnect()
                     end)
@@ -4699,10 +4723,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         Keybind.Key = IsUnassigned and tostring(Enum.KeyCode.Unknown) or tostring(Key.Key)
 
                         if Key.Mode then
-                            Keybind.Mode = Key.Mode
                             Keybind:SetMode(Key.Mode)
                         else
-                            Keybind.Mode = "Toggle"
                             Keybind:SetMode("Toggle")
                         end
 
@@ -4721,14 +4743,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         Update()
                         Keybind:RefreshRegistryEntry()
                     elseif TableFind({"Toggle", "Hold", "Always"}, Key) then
-                        Keybind.Mode = Key
-                        Keybind:SetMode(Keybind.Mode)
-
-                        if Data.Callback then 
-                            Library:SafeCall(Data.Callback, Keybind.Toggled)
-                        end
-
-                        Update()
+                        Keybind:SetMode(Key)
                     end
 
                     Keybind.Picking = false
@@ -4795,6 +4810,10 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 end
 
                 function Keybind:SetMode(Mode)
+                    if Mode ~= "Toggle" and Mode ~= "Hold" and Mode ~= "Always" then return end
+                    if Keybind.Mode ~= Mode then Keybind.Toggled = Mode == "Always" end
+                    Keybind.Mode = Mode
+                    if Mode == "Always" then Keybind.Toggled = true end
                     for Index, Value in Modes do 
                         if Index == Mode then
                             Value:Tween(nil, {BackgroundTransparency = 0})
@@ -4840,41 +4859,15 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 end
 
                 Items["KeyButton"]:Connect("MouseButton1Click", function()
-                    if Keybind.Picking then return end
-                    Keybind.Picking = true 
-
-                    Items["KeyButton"].Instance.Text = "."
-                    local Count = 1
-                    local PickAnimation
-                    PickAnimation = Library:Connect(RunService.Heartbeat, function()
-                        if not Keybind.Picking then
-                            PickAnimation.Connection:Disconnect()
-                            return
-                        end
-                        Count = Count % 3 + 1
-                        Items["KeyButton"].Instance.Text = string.rep(".", Count)
-                    end, nil, 0.5)
-
-                    local InputBegan
-                    InputBegan = Library:Connect(UserInputService.InputBegan, function(Input)
-                        if Input.UserInputType == Enum.UserInputType.Keyboard then 
-                            Keybind:Set(Input.KeyCode)
-                        else
-                            Keybind:Set(Input.UserInputType)
-                        end
-
-                        InputBegan:Disconnect()
-                        InputBegan = nil
-                        PickAnimation.Connection:Disconnect()
-                    end).Connection
+                    Keybind:BeginPick()
                 end)
-
                 Items["KeyButton"]:Connect("MouseButton2Down", function()
                     Keybind:SetOpen(not Keybind.IsOpen)
                 end)
 
                 Library:Connect(UserInputService.InputBegan, function(Input)
                     if Keybind.Picking then return end
+                    if UserInputService:GetFocusedTextBox() then return end
                     if Keybind.Value == "None" then
                         return
                     end
@@ -4932,29 +4925,23 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 end)
 
                 Items["Toggle"]:Connect("MouseButton1Down", function()
-                    Keybind.Mode = "Toggle"
                     Keybind:SetMode("Toggle")
                 end)
                 Items["Toggle"]:Connect("MouseButton2Down", function()
-                    Keybind.Mode = "Toggle"
                     Keybind:SetMode("Toggle")
                 end)
 
                 Items["Hold"]:Connect("MouseButton1Down", function()
-                    Keybind.Mode = "Hold"
                     Keybind:SetMode("Hold")
                 end)
                 Items["Hold"]:Connect("MouseButton2Down", function()
-                    Keybind.Mode = "Hold"
                     Keybind:SetMode("Hold")
                 end)
 
                 Items["Always"]:Connect("MouseButton1Down", function()
-                    Keybind.Mode = "Always"
                     Keybind:SetMode("Always")
                 end)
                 Items["Always"]:Connect("MouseButton2Down", function()
-                    Keybind.Mode = "Always"
                     Keybind:SetMode("Always")
                 end)
 
@@ -8514,6 +8501,25 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             })
             Root:AddToTheme({BackgroundColor3 = "Background", BorderColor3 = "Border"})
             Root:MakeDraggable()
+            function Viewer:SetPositionConfig(Flag)
+                local function SavePosition()
+                    local Position = Root.Instance.Position
+                    Library.Flags[Flag] = {
+                        XScale = Position.X.Scale, XOffset = Position.X.Offset,
+                        YScale = Position.Y.Scale, YOffset = Position.Y.Offset,
+                    }
+                end
+                Library.SetFlags[Flag] = function(Value)
+                    if type(Value) ~= "table" then return end
+                    local XScale, XOffset = tonumber(Value.XScale), tonumber(Value.XOffset)
+                    local YScale, YOffset = tonumber(Value.YScale), tonumber(Value.YOffset)
+                    if not XScale or not XOffset or not YScale or not YOffset then return end
+                    Root.Instance.Position = UDim2.new(XScale, XOffset, YScale, YOffset)
+                    SavePosition()
+                end
+                table.insert(Connections, Root.Instance:GetPropertyChangedSignal("Position"):Connect(SavePosition))
+                SavePosition()
+            end
             Instances:Create("UIStroke", {
                 Parent = Root.Instance, Color = Library.Theme.Outline,
                 ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
@@ -21848,8 +21854,6 @@ end
             local function Set(Object, Property, Value)
                 if Object[Property] ~= Value then Object[Property] = Value end
             end
-            local Colors = {Color3.fromRGB(255, 210, 65), Color3.fromRGB(65, 190, 255),
-                Color3.fromRGB(245, 85, 125), Color3.fromRGB(65, 225, 185)}
             local function Create(Class, Properties)
                 local Object = Instance.new(Class)
                 for Key, Value in pairs(Properties) do Object[Key] = Value end
@@ -21866,23 +21870,26 @@ end
             end
             local function AddRow(Player)
                 local Frame = Create("Frame", {Parent = Gui, BackgroundTransparency = 1,
-                    Size = UDim2.fromOffset(270, 48)})
-                local Diamond = Create("Frame", {Parent = Frame, BorderSizePixel = 0,
-                    Position = UDim2.fromOffset(3, 9), Size = UDim2.fromOffset(9, 9), Rotation = 45})
+                    Size = UDim2.fromOffset(294, 48)})
+                local Avatar = Create("ImageLabel", {Parent = Frame, BorderSizePixel = 0,
+                    BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 2),
+                    Size = UDim2.fromOffset(36, 36),
+                    Image = string.format("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150", Player.UserId)})
+                Create("UICorner", {Parent = Avatar, CornerRadius = UDim.new(1, 0)})
                 local Name = Create("TextLabel", {Parent = Frame, BackgroundTransparency = 1,
-                    Position = UDim2.fromOffset(20, 0), Size = UDim2.fromOffset(180, 25),
-                    Font = Enum.Font.SourceSansSemibold, TextSize = 19, TextColor3 = Color3.new(1, 1, 1),
+                    Position = UDim2.fromOffset(44, 0), Size = UDim2.fromOffset(180, 25),
+                    Font = Enum.Font.FredokaOne, TextSize = 19, TextColor3 = Color3.new(1, 1, 1),
                     TextStrokeTransparency = 0.5, TextXAlignment = Enum.TextXAlignment.Left,
                     TextTruncate = Enum.TextTruncate.AtEnd, Text = Player.DisplayName})
                 local Status = Create("TextLabel", {Parent = Frame, BackgroundTransparency = 1,
-                    Position = UDim2.fromOffset(200, 0), Size = UDim2.fromOffset(60, 25),
-                    Font = Enum.Font.SourceSansSemibold, TextSize = 15, TextColor3 = Color3.new(1, 1, 1),
+                    Position = UDim2.fromOffset(224, 0), Size = UDim2.fromOffset(60, 25),
+                    Font = Enum.Font.FredokaOne, TextSize = 15, TextColor3 = Color3.new(1, 1, 1),
                     TextStrokeTransparency = 0.5, TextXAlignment = Enum.TextXAlignment.Right})
                 local Track = Create("Frame", {Parent = Frame, BorderSizePixel = 0,
                     BackgroundColor3 = Color3.fromRGB(20, 30, 20), BackgroundTransparency = 0.3,
-                    Position = UDim2.fromOffset(20, 28), Size = UDim2.fromOffset(240, 10)})
+                    Position = UDim2.fromOffset(44, 28), Size = UDim2.fromOffset(240, 10)})
                 local Bar = Create("Frame", {Parent = Track, BorderSizePixel = 0})
-                Rows[Player] = {Frame = Frame, Diamond = Diamond, Name = Name, Status = Status, Bar = Bar}
+                Rows[Player] = {Frame = Frame, Avatar = Avatar, Name = Name, Status = Status, Bar = Bar}
                 return Rows[Player]
             end
             local Connection = ConnectScheduled(game:GetService("RunService").Heartbeat, function(Delta)
@@ -21914,7 +21921,6 @@ end
                 for Index, Player in ipairs(Members) do
                     local Row = Rows[Player] or AddRow(Player)
                     Set(Row.Frame, "Position", UDim2.fromOffset(24, 70 + (Index - 1) * 48))
-                    Set(Row.Diamond, "BackgroundColor3", Colors[(Index - 1) % #Colors + 1])
                     Set(Row.Name, "Text", Player.DisplayName)
                     local Character = Player.Character
                     local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
@@ -24731,6 +24737,7 @@ end
             end
 
             local Viewer = Library:InventoryViewer("Inventory viewer", UDim2.new(0, 12, 0, 100))
+            Viewer:SetPositionConfig("UIInventoryViewerPosition")
             local ViewerEnabled, ViewMode, IncludeDeadBodies = false, "Inventory", false
             local ViewerHideInMenus = false
             local function ViewerVisible()
