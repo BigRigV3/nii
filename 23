@@ -1843,6 +1843,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
 
             Components.WindowPage = function(self, Data)
                 local Page = {
+                    Name = Data.Name,
                     Active = false,
                     SubPages = { },
                     Items = { },
@@ -2083,6 +2084,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
 
             Components.WindowSubPage = function(self, Data)
                 local SubPage = {
+                    Name = Data.Name,
                     Active = false,
                     Window = Data.Window,
                     ParentPage = Data.Page,
@@ -6460,42 +6462,121 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 end
             end)
 
-            local SearchStepped
-
-            Items["Input"]:Connect("Focused", function()
-                local PageSearchData = Library.SearchItems[Library.CurrentPage]
-
-                if not PageSearchData then
-                    return 
+            local SearchResults = Instances:Create("ScrollingFrame", {
+                Parent = Items["Search"].Instance, Name = "FeatureSearchResults",
+                Position = UDim2New(0, 0, 1, 6), Size = UDim2New(0, 360, 0, 240),
+                BackgroundColor3 = Library.Theme.Background, BorderSizePixel = 1,
+                BorderColor3 = Library.Theme.Outline, ScrollBarThickness = 4,
+                CanvasSize = UDim2New(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+                Visible = false, ZIndex = 100,
+            })
+            SearchResults:AddToTheme({BackgroundColor3 = "Background", BorderColor3 = "Outline"})
+            Instances:Create("UIListLayout", {Parent = SearchResults.Instance,
+                SortOrder = Enum.SortOrder.LayoutOrder})
+            local NoResults = Instances:Create("TextLabel", {
+                Parent = SearchResults.Instance, Size = UDim2New(1, -6, 0, 32),
+                Text = "No matching features", BackgroundTransparency = 1,
+                FontFace = Library.Font, TextSize = 10, TextColor3 = Library.Theme.Text,
+                ZIndex = 101, Visible = false,
+            })
+            NoResults:AddToTheme({TextColor3 = "Text"})
+            local ResultButtons, SearchVersion = {}, 0
+            local function PagePath(Page)
+                local Names = {}
+                while Page do
+                    table.insert(Names, 1, Page.Name or "Page")
+                    Page = Page.ParentPage
                 end
-
-                SearchStepped = ConnectScheduled(RunService.RenderStepped, function()
-                    for Index, Value in PageSearchData do 
-                        local Name = Value.Name
-                        local Element = Value.Element
-
-                        if StringFind(StringLower(Name), StringLower(Items["Input"].Instance.Text)) then
-                            if Items["Input"].Instance.Text ~= "" then 
-                                Element.Instance.Visible  = true 
-                                Element:Tween(TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = Window:GetOldSize(Element)})
-                            else
-                                Element.Instance.Visible  = true 
-                                Element:Tween(TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = Window:GetOldSize(Element)})
-                            end
-                        else
-                            Window:AddToOldSizes(Element, Element.Instance.Size)
-                            Element:Tween(TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2New(Window:GetOldSize(Element).X.Scale, Window:GetOldSize(Element).X.Offset, 0, 0)})
-                            task.wait(0.1)
-                            Element.Instance.Visible = false
-                        end
+                return table.concat(Names, " / ")
+            end
+            local function Navigate(Page, Element)
+                local Chain, Current = {}, Page
+                while Current do table.insert(Chain, 1, Current); Current = Current.ParentPage end
+                for _, Selected in ipairs(Chain) do
+                    local Siblings = Selected.ParentPage and Selected.ParentPage.SubPages or Window.Pages
+                    for _, Sibling in ipairs(Siblings) do Sibling:Turn(Sibling == Selected) end
+                end
+                SearchVersion += 1
+                SearchResults.Instance.Visible = false
+                Items["Input"].Instance.Text = ""
+                Items["Input"].Instance:ReleaseFocus()
+                task.defer(function()
+                    if Library.Unloaded or not Element.Parent then return end
+                    local Column = Element:FindFirstAncestorWhichIsA("ScrollingFrame")
+                    if Column then
+                        local Offset = (Element.AbsolutePosition.Y - Column.AbsolutePosition.Y) / Library.MenuScale
+                        local Maximum = math.max(0, (Column.AbsoluteCanvasSize.Y - Column.AbsoluteSize.Y) / Library.MenuScale)
+                        Column.CanvasPosition = Vector2New(0, math.clamp(Column.CanvasPosition.Y + Offset - 8, 0, Maximum))
                     end
                 end)
+            end
+            local function RefreshSearch()
+                local Query = StringLower(Items["Input"].Instance.Text):match("^%s*(.-)%s*$")
+                local Results = {}
+                if Query ~= "" then
+                    for Page, Entries in pairs(Library.SearchItems) do
+                        if Page.Window == Window then
+                            local Path = PagePath(Page)
+                            for _, Entry in ipairs(Entries) do
+                                local Element = Entry.Element and Entry.Element.Instance
+                                local Section, Ancestor = "", Element
+                                while Ancestor do
+                                    local Name = Ancestor:GetAttribute("CinnamonSearchSection")
+                                    if Name then Section = " / " .. Name; break end
+                                    Ancestor = Ancestor.Parent
+                                end
+                                local Text = tostring(Entry.Name) .. " — " .. Path .. Section
+                                local Matches = true
+                                for Word in Query:gmatch("%S+") do
+                                    if not StringFind(StringLower(Text), Word, 1, true) then Matches = false; break end
+                                end
+                                if Matches and Element and Element.Parent then
+                                    Results[#Results + 1] = {Text = Text, Page = Page, Element = Element}
+                                end
+                            end
+                        end
+                    end
+                    table.sort(Results, function(A, B) return A.Text < B.Text end)
+                end
+                for Index, Result in ipairs(Results) do
+                    local Row = ResultButtons[Index]
+                    if not Row then
+                        Row = Instances:Create("TextButton", {
+                            Parent = SearchResults.Instance, Size = UDim2New(1, -6, 0, 32),
+                            BackgroundTransparency = 1, FontFace = Library.Font, TextSize = 10,
+                            TextColor3 = Library.Theme.Text, TextXAlignment = Enum.TextXAlignment.Left,
+                            TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 101,
+                        })
+                        Row:AddToTheme({TextColor3 = "Text"})
+                        Row:Connect("MouseButton1Click", function()
+                            local Target = Row.Result
+                            if Target then Navigate(Target.Page, Target.Element) end
+                        end)
+                        ResultButtons[Index] = Row
+                    end
+                    Row.Result = Result
+                    Row.Instance.Text, Row.Instance.LayoutOrder, Row.Instance.Visible = Result.Text, Index, true
+                end
+                for Index = #Results + 1, #ResultButtons do
+                    ResultButtons[Index].Result = nil
+                    ResultButtons[Index].Instance.Visible = false
+                end
+                SearchResults.Instance.CanvasPosition = Vector2New()
+                NoResults.Instance.Visible = Query ~= "" and #Results == 0
+                SearchResults.Instance.Visible = Query ~= "" and Window.IsOpen
+            end
+            Library:Connect(Items["Input"].Instance:GetPropertyChangedSignal("Text"), function()
+                SearchVersion += 1
+                local Version = SearchVersion
+                task.delay(0.08, function()
+                    if not Library.Unloaded and SearchVersion == Version then RefreshSearch() end
+                end)
             end)
-
-            Items["Input"]:Connect("FocusLost", function()
-                if SearchStepped then 
-                    SearchStepped:Disconnect()
-                    SearchStepped = nil
+            Items["Input"]:Connect("Focused", RefreshSearch)
+            Items["Input"]:Connect("FocusLost", function(EnterPressed)
+                if EnterPressed and ResultButtons[1] and ResultButtons[1].Result then
+                    local Target = ResultButtons[1].Result
+                    Navigate(Target.Page, Target.Element)
                 end
             end)
 
@@ -6526,7 +6607,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 FadeTime = Page.Window.FadeTime,
                 Window = Page.Window
             })
-
+            Library.SearchItems[Page] = nil
+            Library.SearchItems[NewPage] = {}
             return setmetatable(NewPage, Library.Pages)
         end
 
@@ -6550,7 +6632,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 SubPages = Data.SubPages == true,
                 Window = SubPage.Page.Window
             })
-
+            Library.SearchItems[SubPage] = nil
             return setmetatable(NewSubPage, Library.Pages)
         end
         
@@ -6939,6 +7021,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     AutomaticSize = Enum.AutomaticSize.Y,
                     BackgroundColor3 = FromRGB(26, 22, 23)
                 })  Items["Section"]:AddToTheme({BackgroundColor3 = "Inline", BorderColor3 = "Outline"})
+                Items["Section"].Instance:SetAttribute("CinnamonSearchSection", Section.Name)
 
                 Items["Section"]:Border("Border")
 
@@ -21484,7 +21567,7 @@ end
         local Input = game:GetService("UserInputService")
         local Player = Players.LocalPlayer
         local Controller = {Enabled = false, Text = false, Icon = false, NPCs = false,
-            ValueFilter = false, MinValue = 0, MaxDistance = 200, Color = Color3.fromRGB(235, 235, 235)}
+            HideEmpty = true, ValueFilter = false, MinValue = 0, MaxDistance = 200, Color = Color3.fromRGB(235, 235, 235)}
         local Bodies, Connections, Pending, Candidates = {}, {}, {}, {}
         local Folder
         local Holder = Instance.new("ScreenGui")
@@ -21516,6 +21599,10 @@ end
         end
 
         function Controller:PassesValueFilter(Body)
+            if self.HideEmpty and InventoryValues then
+                local Total = InventoryValues:ForInventory(Body:FindFirstChild("Inventory"))
+                if Total and Total.Known == 0 and Total.Unknown == 0 then return false end
+            end
             local Minimum = math.max(0, tonumber(self.MinValue) or 0)
             if not self.ValueFilter or Minimum == 0 then return true end
             if not InventoryValues then return false end
@@ -21654,7 +21741,7 @@ end
         end
 
         local MetadataElapsed, FolderElapsed = 1, 1
-        local LastEnabled, LastDistance, LastText, LastIcon, LastColor, LastFont, LastNPCs, LastValueFilter, LastMinValue
+        local LastEnabled, LastDistance, LastText, LastIcon, LastColor, LastFont, LastNPCs, LastValueFilter, LastMinValue, LastHideEmpty
         local UpdateConnection = ESP:ConnectRender(function(Delta)
             MetadataElapsed, FolderElapsed = MetadataElapsed + Delta, FolderElapsed + Delta
             if FolderElapsed >= 0.5 then
@@ -21666,6 +21753,7 @@ end
                 or Controller.Text ~= LastText or Controller.Icon ~= LastIcon
                 or Controller.NPCs ~= LastNPCs
                 or Controller.ValueFilter ~= LastValueFilter or Controller.MinValue ~= LastMinValue
+                or Controller.HideEmpty ~= LastHideEmpty
                 or Controller.Color ~= LastColor or ESP.FontSize ~= LastFont
             local Camera = workspace.CurrentCamera
             if not Enabled or not Camera then
@@ -21682,6 +21770,7 @@ end
                 LastColor, LastFont = Controller.Color, ESP.FontSize
                 LastNPCs = Controller.NPCs
                 LastValueFilter, LastMinValue = Controller.ValueFilter, Controller.MinValue
+                LastHideEmpty = Controller.HideEmpty
                 SyncNPCBodies()
                 for Body in pairs(Pending) do
                     if Body.Parent ~= Folder then Pending[Body] = nil else Add(Body) end
@@ -21743,6 +21832,103 @@ end
         return Controller
     end
         end)()(Library, ESP, CombatController, UnloadCallbacks, InventoryValues)
+        do
+        (function()
+            local Players = game:GetService("Players")
+            local ReplicatedStorage = game:GetService("ReplicatedStorage")
+            local LocalPlayer = Players.LocalPlayer
+            local Settings = {Enabled = true}
+            Library.SquadHealth = Settings
+            local Gui = Instance.new("ScreenGui")
+            Gui.Name, Gui.ResetOnSpawn, Gui.IgnoreGuiInset = "CinnamonSquadHealth", false, true
+            Gui.DisplayOrder = 2
+            Gui.Parent = Library.Holder.Instance.Parent
+            local Rows = {}
+            local Members, Seen, MembershipElapsed = {}, {}, 1
+            local function Set(Object, Property, Value)
+                if Object[Property] ~= Value then Object[Property] = Value end
+            end
+            local function Create(Class, Properties)
+                local Object = Instance.new(Class)
+                for Key, Value in pairs(Properties) do Object[Key] = Value end
+                return Object
+            end
+            local function Party(Player)
+                local Folder = ReplicatedStorage:FindFirstChild("Players")
+                local Data = Folder and Folder:FindFirstChild(Player.Name)
+                local Status = Data and Data:FindFirstChild("Status")
+                local Journey = Status and Status:FindFirstChild("Journey")
+                local TeleportParty = Journey and Journey:FindFirstChild("TeleportParty")
+                local Id = TeleportParty and TeleportParty:GetAttribute("CurrentParty")
+                return type(Id) == "string" and Id ~= "" and Id or nil
+            end
+            local function AddRow(Player)
+                local Frame = Create("Frame", {Parent = Gui, BackgroundTransparency = 1,
+                    Size = UDim2.fromOffset(294, 48)})
+                local Avatar = Create("ImageLabel", {Parent = Frame, BorderSizePixel = 0,
+                    BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 2),
+                    Size = UDim2.fromOffset(36, 36),
+                    Image = string.format("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150", Player.UserId)})
+                Create("UICorner", {Parent = Avatar, CornerRadius = UDim.new(1, 0)})
+                local Name = Create("TextLabel", {Parent = Frame, BackgroundTransparency = 1,
+                    Position = UDim2.fromOffset(44, 0), Size = UDim2.fromOffset(180, 25),
+                    Font = Enum.Font.FredokaOne, TextSize = 19, TextColor3 = Color3.new(1, 1, 1),
+                    TextStrokeTransparency = 0.5, TextXAlignment = Enum.TextXAlignment.Left,
+                    TextTruncate = Enum.TextTruncate.AtEnd, Text = Player.DisplayName})
+                local Status = Create("TextLabel", {Parent = Frame, BackgroundTransparency = 1,
+                    Position = UDim2.fromOffset(224, 0), Size = UDim2.fromOffset(60, 25),
+                    Font = Enum.Font.FredokaOne, TextSize = 15, TextColor3 = Color3.new(1, 1, 1),
+                    TextStrokeTransparency = 0.5, TextXAlignment = Enum.TextXAlignment.Right})
+                local Track = Create("Frame", {Parent = Frame, BorderSizePixel = 0,
+                    BackgroundColor3 = Color3.fromRGB(20, 30, 20), BackgroundTransparency = 0.3,
+                    Position = UDim2.fromOffset(44, 28), Size = UDim2.fromOffset(240, 10)})
+                local Bar = Create("Frame", {Parent = Track, BorderSizePixel = 0})
+                Rows[Player] = {Frame = Frame, Avatar = Avatar, Name = Name, Status = Status, Bar = Bar}
+                return Rows[Player]
+            end
+            local Connection = ConnectScheduled(game:GetService("RunService").Heartbeat, function(Delta)
+                Set(Gui, "Enabled", Settings.Enabled)
+                MembershipElapsed += Delta or 0
+                if not Settings.Enabled then return end
+                if MembershipElapsed >= 1 then
+                MembershipElapsed = 0
+                table.clear(Members)
+                table.clear(Seen)
+                Members[1], Seen[LocalPlayer] = LocalPlayer, true
+                local Id = Party(LocalPlayer)
+                for _, Player in ipairs(Players:GetPlayers()) do
+                    if Player ~= LocalPlayer and ((Id and Party(Player) == Id)
+                        or (not Id and LocalPlayer.Team and Player.Team == LocalPlayer.Team)) then
+                        Members[#Members + 1] = Player
+                        Seen[Player] = true
+                    end
+                end
+                table.sort(Members, function(A, B)
+                    if A == LocalPlayer then return B ~= LocalPlayer end
+                    if B == LocalPlayer then return false end
+                    return A.UserId < B.UserId
+                end)
+                for Player, Row in pairs(Rows) do
+                    if not Seen[Player] then Row.Frame:Destroy(); Rows[Player] = nil end
+                end
+                end
+                for Index, Player in ipairs(Members) do
+                    local Row = Rows[Player] or AddRow(Player)
+                    Set(Row.Frame, "Position", UDim2.fromOffset(24, 70 + (Index - 1) * 48))
+                    Set(Row.Name, "Text", Player.DisplayName)
+                    local Character = Player.Character
+                    local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+                    local Health = Humanoid and math.max(0, Humanoid.Health) or 0
+                    local Maximum = Humanoid and math.max(1, Humanoid.MaxHealth) or 100
+                    Set(Row.Bar, "Size", UDim2.fromScale(math.clamp(Health / Maximum, 0, 1), 1))
+                    Set(Row.Bar, "BackgroundColor3", Health / Maximum > 0.25 and Color3.fromRGB(95, 215, 55)
+                        or Color3.fromRGB(235, 65, 65))
+                    Set(Row.Status, "Text", not Humanoid and "—" or Health <= 0 and "Dead" or tostring(math.ceil(Health)))
+                end
+            end, 0.1)
+            table.insert(UnloadCallbacks, function() Connection:Disconnect(); Gui:Destroy(); table.clear(Rows) end)
+        end)()
+        end
         ReportLoadingProgress(0.8, "Building appearance settings…")
         BuildEffectsMenu(EffectsController, UIPage, LightingPage, WorldDetailPage, LocalPage, PlayerMiscPage, AntiAimPage, CombatController)
         do
@@ -24719,6 +24905,7 @@ end
             end
             local General = PlayersESPPage:Section({Name = "ESP", Side = 1})
             Toggle(General, "Enabled", "Enabled", ESP, "Enabled")
+            Toggle(General, "Squad health HUD", "SquadHealthHUD", Library.SquadHealth, "Enabled")
             General:Toggle({
                 Name = "Reap IR vision", Flag = "VisualReapIR", Default = false,
                 Tooltip = {Name = "Reap IR vision", Description = "Applies a full-screen thermal view to objects tagged for thermal detection."},
@@ -24755,6 +24942,7 @@ end
             Toggle(Bodies, "Enabled", "DeadBodiesEnabled", BodyController, "Enabled", "Color")
             Toggle(Bodies, "Name & distance", "DeadBodiesText", BodyController, "Text")
             Toggle(Bodies, "Skull icon", "DeadBodiesIcon", BodyController, "Icon")
+            Toggle(Bodies, "Hide empty bodies", "DeadBodiesHideEmpty", BodyController, "HideEmpty")
             Toggle(Bodies, "Value filter", "DeadBodiesValueFilter", BodyController, "ValueFilter")
             Slider(Bodies, "Minimum value", "DeadBodiesMinValue", BodyController, "MinValue", 0, 10000000, 1000, "?")
             Slider(Bodies, "Max distance", "DeadBodiesMaxDistance", BodyController, "MaxDistance", 10, 2000, 1, "m")
@@ -25179,5 +25367,5 @@ end, function(Message)
     return type(Trace) == "function" and Trace(tostring(Message), 2) or tostring(Message)
 end)
 CinnamonEnvironment.__cinnamon_initializing = nil
-if not CinnamonSuccess then error(CinnamonResult, 0) end
+if not CinnamonSuccess then error(CinnamonResult, 0) ewnd
 return CinnamonResult
