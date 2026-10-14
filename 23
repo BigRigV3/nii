@@ -463,7 +463,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             end
             return Job
         end
-        local function DownloadAsset(Job)
+        local function DownloadAsset(Job, Attempt)
             local Cached = isfile(Job.Path)
             local Bytes = Cached and readfile(Job.Path) or game:HttpGet(Job.URL)
             local Converted = false
@@ -480,8 +480,24 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 local First, Second = Bytes:byte(1, 2)
                 assert(Bytes:sub(1, 3) == "ID3" or (First == 255 and Second and Second >= 224), "Menu sound asset must be an MP3")
             end
-            assert(not AssetsCancelled, "Asset loading stopped")
+            assert(not AssetsCancelled and Job.Attempt == Attempt, "Asset loading stopped")
             if not Cached or Converted then writefile(Job.Path, Bytes) end
+        end
+        local function RunAssetDownload(Job)
+            Job.Attempt = (Job.Attempt or 0) + 1
+            local Attempt, Started = Job.Attempt, os.clock()
+            local Done, Success, Result = false, false, nil
+            local Thread = task.spawn(function()
+                Success, Result = pcall(DownloadAsset, Job, Attempt)
+                Done = true
+            end)
+            while not Done and not AssetsCancelled and os.clock() - Started < 15 do task.wait() end
+            if not Done or AssetsCancelled then
+                Job.Attempt += 1
+                pcall(task.cancel, Thread)
+                return false, "Asset download timed out or was cancelled: " .. Job.Path
+            end
+            return Success, Result
         end
         local function StartAssetWorkers()
             while not AssetsCancelled and AssetWorkers < 4 and NextAssetJob <= #AssetQueue do
@@ -493,7 +509,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         NextAssetJob = NextAssetJob + 1
                         task.wait()
                         if AssetsCancelled then break end
-                        Job.Success, Job.Error = pcall(DownloadAsset, Job)
+                        Job.Success, Job.Error = RunAssetDownload(Job)
                         Job.Ready = true
                         if not Job.Success and not AssetsCancelled then
                             warn("[Cinnamon] Asset unavailable: " .. Job.Path .. " - " .. tostring(Job.Error))
@@ -1333,7 +1349,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
 
             self.ImageAssetCache = self.ImageAssetCache or {}
             if self.ImageAssetCache[Image] then return self.ImageAssetCache[Image] end
-            local Path = self:EnsureAsset(self.Folders.Assets .. "/" .. ImageData[1], ImageData[2], ImageData[3] and "png" or nil)
+            local Ready, Path = pcall(self.EnsureAsset, self, self.Folders.Assets .. "/" .. ImageData[1], ImageData[2], ImageData[3] and "png" or nil)
+            if not Ready then return "" end
             local Asset = getcustomasset(Path)
             self.ImageAssetCache[Image] = Asset
             return Asset
@@ -15947,6 +15964,8 @@ end
         local Send = request or http_request
         local Endpoint = "https://api.cinnamon.pub/v1/presence"
         local Session, Busy, Failures = nil, false, 0
+        local RequestId, RequestStarted, RequestThread = 0, 0, nil
+        local RefreshUntil, RefreshPending, LastPoll = 0, false, -math.huge
         local function Payload(Token)
             return Http:JSONEncode({userId = LocalPlayer.UserId, placeId = game.PlaceId,
                 jobId = game.JobId, sessionToken = Token})
@@ -15959,22 +15978,34 @@ end
             end)
         end
         local function Poll()
+            local Now = os.clock()
+            if Busy and Now - RequestStarted >= 15 then
+                RequestId += 1
+                Busy = false
+                if RequestThread then pcall(task.cancel, RequestThread) end
+                Presence.Error, Presence.NextUpdate = "Presence request timed out", Now + 5
+            end
             if not Alive or not Presence.Enabled or Busy or os.clock() < Presence.NextUpdate then return end
+            if Now - LastPoll < 3 then return end
             if type(Send) ~= "function" or game.JobId == "" then return end
             Busy = true
+            RequestId += 1
+            local Attempt = RequestId
+            RequestStarted, LastPoll = Now, Now
             local Generation = Presence.Generation
-            task.spawn(function()
+            RequestThread = task.spawn(function()
                 local Success, Result = pcall(function()
                     local Reply = Send({Url = Endpoint, Method = "POST",
                         Headers = {["Content-Type"] = "application/json"}, Body = Payload(Session)})
                     if type(Reply) ~= "table" then error("Presence API unavailable") end
-                    if Reply.StatusCode == 401 then Session = nil end
+                    if Reply.StatusCode == 401 and Attempt == RequestId then Session = nil end
                     assert(Reply.StatusCode == 200, "Presence API unavailable (" .. tostring(Reply.StatusCode) .. ")")
                     local Data = Http:JSONDecode(Reply.Body)
                     assert(type(Data) == "table" and type(Data.sessionToken) == "string"
                         and type(Data.userIds) == "table", "Invalid presence response")
                     return Data
                 end)
+                if Attempt ~= RequestId then return end
                 Busy = false
                 if not Alive or not Presence.Enabled or Presence.Generation ~= Generation then
                     if Success then Leave(Result.sessionToken) end
@@ -15986,7 +16017,9 @@ end
                     for _, Id in ipairs(Result.userIds) do
                         if type(Id) == "number" then Presence.Users[Id] = true end
                     end
-                    Presence.Updated, Presence.NextUpdate = os.clock(), os.clock() + 30
+                    local Delay = RefreshPending and 3 or (os.clock() < RefreshUntil and 5 or 15)
+                    RefreshPending = false
+                    Presence.Updated, Presence.NextUpdate = os.clock(), os.clock() + Delay
                     Presence.Error = nil
                 else
                     Failures = math.min(Failures + 1, 5)
@@ -16023,12 +16056,24 @@ end
             if not Installed then ChatCallback = nil end
         end
         function Presence:SetEnabled(Value)
+            RequestId += 1
+            if RequestThread then pcall(task.cancel, RequestThread) end
+            Busy, LastPoll, RefreshPending = false, -math.huge, false
             self.Generation += 1
             self.Enabled, self.NextUpdate, self.Updated = Value == true, 0, 0
             table.clear(self.Users)
             Leave(Session); Session = nil
             if self.Enabled then Poll() end
         end
+        local Joined = Players.PlayerAdded:Connect(function()
+            if not Alive or not Presence.Enabled then return end
+            RefreshUntil, RefreshPending = os.clock() + 60, true
+            Presence.NextUpdate = 0
+            Poll()
+        end)
+        local Left = Players.PlayerRemoving:Connect(function(Player)
+            Presence.Users[Player.UserId] = nil
+        end)
         local PresencePage = Page:SubPage({Name = "Cinnamon users", Columns = 1})
         local Controls = PresencePage:Section({Name = "Cinnamon users", Side = 1})
         Controls:Label("Share your presence and see Cinnamon users in this server")
@@ -16051,6 +16096,8 @@ end
         UnloadCallbacks[#UnloadCallbacks + 1] = function()
             Presence:SetEnabled(false)
             Connection:Disconnect()
+            Joined:Disconnect()
+            Left:Disconnect()
             if ChatCallback then
                 pcall(function()
                     local Current = ReadCallback and ReadCallback(ChatService, "OnIncomingMessage") or ChatService.OnIncomingMessage
