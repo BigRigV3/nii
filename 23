@@ -17899,7 +17899,6 @@ return function(Library, Page, UnloadCallbacks, Prices)
                     until os.clock() >= Deadline or not Alive or S.Cancelled
                     if Item:GetAttribute("Slot") ~= "Container" .. Destination or (Other and Other:GetAttribute("Slot") ~= "Container" .. Source) then error("Game did not confirm the move; sort stopped") end
                     Moves += 1
-                    task.wait(0.12)
                 end
                 for Index, Row in ipairs(Rows) do
                     Validate()
