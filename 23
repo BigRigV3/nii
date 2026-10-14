@@ -428,6 +428,23 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             end
         end
 
+        Library.AutoloadPath = Library.Folders.Directory .. "/autoload.json"
+        if isfile(Library.AutoloadPath) then
+            local Success, Saved = pcall(function() return HttpService:JSONDecode(readfile(Library.AutoloadPath)) end)
+            if Success and type(Saved) == "table" and type(Saved.Config) == "string"
+                and not Saved.Config:find("[/\\]") then Library.AutoloadConfig = Saved.Config end
+        end
+        function Library:SetAutoloadConfig(Name)
+            if Name then
+                assert(type(Name) == "string" and not Name:find("[/\\]"), "Invalid config name")
+                assert(isfile(self.Folders.Configs .. "/" .. Name), "Config no longer exists")
+                writefile(self.AutoloadPath, HttpService:JSONEncode({Config = Name}))
+            elseif isfile(self.AutoloadPath) then
+                delfile(self.AutoloadPath)
+            end
+            self.AutoloadConfig = Name
+        end
+
          
         local AssetQueue, AssetJobs, NextAssetJob, AssetWorkers = {}, {}, 1, 0
         local AssetsCancelled = false
@@ -1653,6 +1670,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
         Library.DeleteConfig = function(self, Config)
             if isfile(Library.Folders.Configs .. "/" .. Config) then 
                 delfile(Library.Folders.Configs .. "/" .. Config)
+                if self.AutoloadConfig == Config then self:SetAutoloadConfig(nil) end
             end
         end
 
@@ -2560,6 +2578,10 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
 
                     function NewButton:SetVisibility(Bool)
                         SubItems["NewButton"].Instance.Visible = Bool
+                    end
+
+                    function NewButton:SetText(Text)
+                        SubItems["Text"].Instance.Text = tostring(Text)
                     end
 
                     local PageSearchData = Library.SearchItems[Data.Page]
@@ -8024,6 +8046,13 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     local ConfigsSection = ConfigsSubPage:Section({Name = "Configs", Side = 1}) do
                         local ConfigName
                         local ConfigSelected
+                        local AutoloadButton
+                        local function RefreshAutoloadButton()
+                            if AutoloadButton then
+                                AutoloadButton:SetText(ConfigSelected and ConfigSelected == Library.AutoloadConfig
+                                    and "Unset autoload" or "Set as autoload")
+                            end
+                        end
 
                         local ConfigsSearchbox = ConfigsSection:Searchbox({
                             Name = "SearchboxConfigs",
@@ -8032,6 +8061,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                             Multi = false,
                             Callback = function(Value)
                                 ConfigSelected = Value
+                                RefreshAutoloadButton()
                             end
                         })
 
@@ -8063,6 +8093,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         CreateAndDeleteButton:Add("Delete", function()
                             if ConfigSelected then
                                 Library:DeleteConfig(ConfigSelected)
+                                RefreshAutoloadButton()
                                 Library:Notification("Success", "Deleted config "..ConfigSelected .. " succesfully", 5)
                                 Library:RefreshConfigsList(ConfigsSearchbox)
                             end
@@ -8091,6 +8122,13 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         end)
 
                         local ServerActions = ConfigsSection:Button()
+                        AutoloadButton = ConfigsSection:Button():Add("Set as autoload", function()
+                            if not ConfigSelected then return end
+                            local Name = ConfigSelected ~= Library.AutoloadConfig and ConfigSelected or nil
+                            local Success, Error = pcall(Library.SetAutoloadConfig, Library, Name)
+                            if not Success then Library:Notification("Autoload error", tostring(Error), 5) end
+                            RefreshAutoloadButton()
+                        end)
                         ServerActions:Add("Copy join script", function()
                             if type(setclipboard) ~= "function" then
                                 Library:Notification("Clipboard unavailable", "Your executor does not provide setclipboard", 5)
@@ -9845,7 +9883,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 Parts = {"Head", "UpperTorso", "LowerTorso"}},
             MagicBullet = {Enabled = false, Held = false, Height = 100},
             Aim = {Enabled = false, Held = false, HitChance = 100, FOV = 150, FOVOrigin = "Screen center", ShowFOV = false,
-                Snaplines = false, VisCheck = true, Lead = true, Players = true, NPCs = true, Helicopters = false, Bone = "Head", Priority = "Closest visible to crosshair", Distance = 1000},
+                Snaplines = false, VisCheck = true, FriendlyCheck = false, Lead = true, Players = true, NPCs = true, Helicopters = false, Bone = "Head", Priority = "Closest visible to crosshair", Distance = 1000},
             Mods = {Spread = false, SpreadAmount = 0, Recoil = false, RecoilAmount = 0,
                 ForceHeadshots = true, HSRTargeting = false, InstantBullet = false,
                 NoSway = false, NoBobbing = false,
@@ -9961,6 +9999,25 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             local Tracker = self.ESP
             return Tracker and Tracker.Enabled and Tracker:GetAimPlayers() or Players:GetPlayers()
         end
+        local FriendCache = setmetatable({}, {__mode = "k"})
+        function Controller:IsFriendlyTarget(Character)
+            local Owner = Character and Players:GetPlayerFromCharacter(Character)
+            if not Owner then return false end
+            if Owner == Player or (Player.Team and Owner.Team == Player.Team) then return true end
+            local Cached = FriendCache[Owner]
+            local Now = os.clock()
+            if not Cached then Cached = {Friendly = true, NextCheck = 0}; FriendCache[Owner] = Cached end
+            if not Cached.Pending and Now >= Cached.NextCheck then
+                Cached.Pending, Cached.NextCheck = true, Now + 30
+                task.spawn(function()
+                    local Success, Friendly = pcall(Player.IsFriendsWith, Player, Owner.UserId)
+                    if Success then Cached.Friendly = Friendly == true
+                    else Cached.NextCheck = os.clock() + 5 end
+                    Cached.Pending = false
+                end)
+            end
+            return Cached.Friendly
+        end
         function Controller:GetNPCTargets()
             local Tracker = self.ESP
             if Tracker and Tracker.Enabled and Tracker.NPCsEnabled then return Tracker:GetAimNPCs() end
@@ -10043,6 +10100,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             local Rage360 = self.Rage.FOV360 and self:IsRageActive()
             for _, Candidate in ipairs(Candidates) do
                 local Character = self:GetTargetCharacter(Candidate)
+                if self.Aim.FriendlyCheck and self:IsFriendlyTarget(Character) then continue end
                 local Bone = self:GetAimBone(Character)
                 local Humanoid = self:GetAimHumanoid(Character)
                 local Part = self:GetAimPart(Character, Bone)
@@ -10124,6 +10182,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
     
         function Controller:GetTarget()
             local Character = self:GetTargetCharacter(self.Target)
+            if self.Aim.FriendlyCheck and self:IsFriendlyTarget(Character) then return end
             local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
             if self.Target and self.Target.Parent and Character and self.Part and Humanoid and Humanoid.Health > 0
                 and self.Part:IsDescendantOf(Character) then
@@ -11750,7 +11809,7 @@ local function CreateEffectsController(Library, Combat, UnloadCallbacks)
         "Vaporwave", "Pink gradient", "Purple gradient", "Custom"}
     E.Weather = {Enabled = false, Mode = "Rain", Color = Color3.fromRGB(215, 230, 255),
         Intensity = 50, Speed = 1, Size = 1, Radius = 32, Wind = 4, WindDirection = 0, Sheltered = true}
-    E.Crosshair = {Enabled = false, Position = "Screen center", Smoothing = false, SmoothTime = 0.35, Color = White, Size = 7, Gap = 4, Thickness = 1, Dot = false, Outline = true, Rotation = 0, Spin = false, Speed = 45}
+    E.Crosshair = {Enabled = false, HideScoped = false, Position = "Screen center", Smoothing = false, SmoothTime = 0.35, Color = White, Size = 7, Gap = 4, Thickness = 1, Dot = false, Outline = true, Rotation = 0, Spin = false, Speed = 45}
     E.Hitmarkers = {Enabled = false, Mode = "Both", Color = White, Size = 8, Duration = 0.4}
     E.Tracers = {Enabled = false, HideDefault = true, CurveManipulated = true, CurveAmount = 3,
         Color = Color3.fromRGB(160, 100, 255), OnHit = false, HitColor = Color3.fromRGB(255, 255, 255),
@@ -13936,8 +13995,11 @@ end
         local Camera = workspace.CurrentCamera
         E:UpdateWeather(Delta, Camera)
         local S = E.Crosshair
+        local ScopeState = S.HideScoped and Combat:GetFPS()
+        local Scoped = ScopeState and ScopeState.isEquipped and ScopeState.Scope and ScopeState.Scope ~= ""
+            and (ScopeState.isAiming == true or ScopeState.RightMouseDown == true or ScopeState.ToolStance == "Aim")
         local CrosshairPosition
-        if Camera and S.Enabled then
+        if Camera and S.Enabled and not Scoped then
             CrosshairPosition = Camera.ViewportSize / 2
             if S.Position == "Follow target" then
                 local Target, Part = Combat:SelectTarget()
@@ -14161,6 +14223,7 @@ local function BuildEffectsMenu(E, UIPage, LightingPage, WorldDetailPage, LocalP
     local Crosshair = UIPage:Section({Name = "Crosshair", Side = 1})
     local C = E.Crosshair
     Toggle(Crosshair, "Enabled", "CrosshairEnabled", C, "Enabled", true)
+    Toggle(Crosshair, "Hide when scoped", "CrosshairHideScoped", C, "HideScoped")
     Dropdown(Crosshair, "Position", "CrosshairPosition", C, "Position", {"Screen center", "Mouse", "Follow target"}, function(Value)
         if CombatController and Value ~= "Follow target" then CombatController.Aim.FOVOrigin = Value end
     end)
@@ -15847,11 +15910,164 @@ end
     local Spectate = CreateSpectateController()
     local Page = Window:Page({Name = "Other", SubPages = true})
     local PlayerPage = Page:SubPage({Name = "Player list", Columns = 1})
+    local Presence = {Enabled = false, Users = {}, Updated = 0, NextUpdate = 0, Generation = 0}
+    Library.CinnamonPresence = Presence
+    do
+        local Http = game:GetService("HttpService")
+        local Send = request or http_request
+        local Endpoint = "https://api.cinnamon.pub/v1/presence"
+        local Session, Busy, Failures = nil, false, 0
+        local function Payload(Token)
+            return Http:JSONEncode({userId = LocalPlayer.UserId, placeId = game.PlaceId,
+                jobId = game.JobId, sessionToken = Token})
+        end
+        local function Leave(Token)
+            if not Token or type(Send) ~= "function" then return end
+            task.spawn(function()
+                pcall(Send, {Url = Endpoint, Method = "DELETE",
+                    Headers = {["Content-Type"] = "application/json"}, Body = Payload(Token)})
+            end)
+        end
+        local function Poll()
+            if not Alive or not Presence.Enabled or Busy or os.clock() < Presence.NextUpdate then return end
+            if type(Send) ~= "function" or game.JobId == "" then return end
+            Busy = true
+            local Generation = Presence.Generation
+            task.spawn(function()
+                local Success, Result = pcall(function()
+                    local Reply = Send({Url = Endpoint, Method = "POST",
+                        Headers = {["Content-Type"] = "application/json"}, Body = Payload(Session)})
+                    if type(Reply) ~= "table" then error("Presence API unavailable") end
+                    if Reply.StatusCode == 401 then Session = nil end
+                    assert(Reply.StatusCode == 200, "Presence API unavailable (" .. tostring(Reply.StatusCode) .. ")")
+                    local Data = Http:JSONDecode(Reply.Body)
+                    assert(type(Data) == "table" and type(Data.sessionToken) == "string"
+                        and type(Data.userIds) == "table", "Invalid presence response")
+                    return Data
+                end)
+                Busy = false
+                if not Alive or not Presence.Enabled or Presence.Generation ~= Generation then
+                    if Success then Leave(Result.sessionToken) end
+                    return
+                end
+                if Success then
+                    Session, Failures = Result.sessionToken, 0
+                    table.clear(Presence.Users)
+                    for _, Id in ipairs(Result.userIds) do
+                        if type(Id) == "number" then Presence.Users[Id] = true end
+                    end
+                    Presence.Updated, Presence.NextUpdate = os.clock(), os.clock() + 30
+                    Presence.Error = nil
+                else
+                    Failures = math.min(Failures + 1, 5)
+                    Presence.NextUpdate = os.clock() + math.min(120, 5 * 2 ^ (Failures - 1))
+                    Presence.Error = tostring(Result)
+                end
+            end)
+        end
+        function Presence:IsUser(Player)
+            return self.Enabled and os.clock() - self.Updated < 90 and self.Users[Player.UserId] == true
+        end
+        function Presence:SetEnabled(Value)
+            self.Generation += 1
+            self.Enabled, self.NextUpdate, self.Updated = Value == true, 0, 0
+            table.clear(self.Users)
+            Leave(Session); Session = nil
+            if self.Enabled then Poll() end
+        end
+        local PresencePage = Page:SubPage({Name = "Cinnamon users", Columns = 1})
+        local Controls = PresencePage:Section({Name = "Cinnamon users", Side = 1})
+        Controls:Label("Share your presence and see Cinnamon users in this server")
+        Controls:Toggle({Name = "Cinnamon presence", Flag = "CinnamonPresenceEnabled", Default = false,
+            Callback = function(Value) Presence:SetEnabled(Value) end})
+        local Status = Controls:Label("Presence disabled")
+        local Connection = ConnectScheduled(game:GetService("RunService").Heartbeat, function()
+            Poll()
+            local Count = 0
+            for _, Player in ipairs(Players:GetPlayers()) do
+                if Player ~= LocalPlayer and Presence:IsUser(Player) then Count += 1 end
+            end
+            Status:SetText(not Presence.Enabled and "Presence disabled"
+                or type(Send) ~= "function" and "Your executor does not support HTTP requests"
+                or game.JobId == "" and "Join a Roblox server to use presence"
+                or Presence.Error and "Presence API unavailable; retrying"
+                or Presence.Updated == 0 and "Connecting..."
+                or Count .. " other Cinnamon users in this server")
+        end, 1)
+        UnloadCallbacks[#UnloadCallbacks + 1] = function()
+            Presence:SetEnabled(false)
+            Connection:Disconnect()
+        end
+    end
     local ServerPage = Page:SubPage({Name = "Servers", Columns = 1})
     local QuestPage = Page:SubPage({Name = "Quests", Columns = 2})
     local StashPage = Page:SubPage({Name = "Stash", Columns = 2})
     local LootPage = Page:SubPage({Name = "Loot", Columns = 2})
+    local WishlistPage = Page:SubPage({Name = "Wishlist", Columns = 2})
     local TraderPage = Page:SubPage({Name = "Traders", Columns = 1})
+    do
+        local RS = ReplicatedStorage
+        local ItemsFolder = RS:FindFirstChild("ItemsList")
+        local Names, Selected = {}, {}
+        for _, Template in ipairs(ItemsFolder and ItemsFolder:GetChildren() or {}) do
+            if Template:FindFirstChild("ItemProperties") then Names[#Names + 1] = Template.Name end
+        end
+        table.sort(Names)
+        local Selection = WishlistPage:Section({Name = "Wishlist items", Side = 1})
+        local Display = WishlistPage:Section({Name = "Inventory viewer", Side = 2})
+        local Viewer = Library:InventoryViewer("Wishlist", UDim2.fromOffset(30, 430))
+        Viewer:SetVisibility(false)
+        Viewer:SetEmptyText("Select items to add to your wishlist")
+        local Showing = false
+        local function Refresh()
+            if not Showing then return end
+            local PlayerData = RS:FindFirstChild("Players")
+            local Data = PlayerData and PlayerData:FindFirstChild(LocalPlayer.Name)
+            local Vault = Data and Data:FindFirstChild("VaultStorage")
+            local Counts = {}
+            local function Count(Folder)
+                if not Folder then return end
+                for _, Item in ipairs(Folder:GetDescendants()) do
+                    if Item:IsA("ObjectValue") and Item.Value and Item.Value:FindFirstChild("ItemProperties") then
+                        local Name = Item.Value.Name
+                        Counts[Name] = (Counts[Name] or 0) + math.max(0, tonumber(Item:GetAttribute("Amount")) or 1)
+                    end
+                end
+            end
+            Count(Data and Data:FindFirstChild("Inventory")
+                or LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Inventory"))
+            Count(Vault and Vault:FindFirstChild("Inventory"))
+            local Entries = {}
+            for _, Name in ipairs(Selected) do
+                local Template = ItemsFolder and ItemsFolder:FindFirstChild(Name)
+                local Props = Template and Template:FindFirstChild("ItemProperties")
+                local Icon = Props and Props:FindFirstChild("ItemIcon")
+                local Owned = Counts[Name] or 0
+                Entries[#Entries + 1] = {Name = tostring(Props and Props:GetAttribute("ItemName") or Name),
+                    Amount = Owned, AmountLabel = "Owned: " .. Owned,
+                    Caption = "Owned: " .. Owned, Image = Icon and Icon.Image or "",
+                    NameColor = Owned > 0 and Library.Theme.Text or Library.Theme.Accent}
+            end
+            Viewer:SetItems(Entries)
+            Viewer:SetStats(#Entries .. " wishlist items | Inventory + stash")
+        end
+        Selection:Searchbox({Name = "Select wishlist items", Flag = "WishlistItems", Items = Names,
+            Multi = true, Default = {}, Callback = function(Value)
+                Selected = {}
+                for _, Name in ipairs(type(Value) == "table" and Value or {}) do
+                    if table.find(Names, Name) and not table.find(Selected, Name) then Selected[#Selected + 1] = Name end
+                end
+                table.sort(Selected)
+                Refresh()
+            end})
+        Display:Toggle({Name = "Show wishlist viewer", Flag = "WishlistViewerEnabled", Default = false,
+            Callback = function(Value) Showing = Value; Viewer:SetVisibility(Value); Refresh() end})
+        Display:Dropdown({Name = "Viewer mode", Flag = "WishlistViewerMode", Items = {"Grid", "Text"},
+            Default = "Grid", Callback = function(Value) Viewer:SetMode(Value or "Grid"); Refresh() end})
+        Display:Button():Add("Refresh wishlist", Refresh)
+        local Connection = ConnectScheduled(game:GetService("RunService").Heartbeat, Refresh, 1)
+        UnloadCallbacks[#UnloadCallbacks + 1] = function() Connection:Disconnect(); Viewer:Destroy() end
+    end
     local function FullPage(SubPage, Name, Placeholder)
         local Parent = SubPage.ColumnsData[1].Instance.Parent
         local Layout = Parent:FindFirstChildOfClass("UIListLayout")
@@ -15932,6 +16148,7 @@ end
         local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
         local Distance = Root and LocalRoot and tostring(math.floor((Root.Position - LocalRoot.Position).Magnitude / GameUnitsPerMeter + 0.5)) .. " meters" or "No character"
         Row.Title.Text = Player.DisplayName .. " (@" .. Player.Name .. ")"
+            .. (Presence:IsUser(Player) and " [Cinnamon]" or "")
         Row.Title.TextColor3 = Player == LocalPlayer and Library.Theme.Accent or Library.Theme.Text
         Row.Subtitle.Text = "ID " .. Player.UserId .. "  |  " .. Player.AccountAge .. " days  |  " .. (Player.Team and Player.Team.Name or "No team")
         Row.Stats.Text = (Humanoid and tostring(math.floor(Humanoid.Health + 0.5)) .. " HP" or "Unknown HP") .. "  |  " .. Distance
@@ -20745,7 +20962,7 @@ end
         local Project = workspace.CurrentCamera and workspace.CurrentCamera.WorldToViewportPoint
         local S = {Enabled = false, HitChance = 100, OnlyModsOff = false, Drop = true, Lead = true, Spread = true,
             NPCs = false, Bone = "Closest to crosshair", FOV = 180, Distance = 3000, Radius = 7,
-            Lock = false, LockHeld = false, StickyTarget = false, Smoothing = 0.12, ShowFOV = false, VisCheck = true,
+            Lock = false, LockHeld = false, StickyTarget = false, FriendlyCheck = false, Smoothing = 0.12, ShowFOV = false, VisCheck = true,
             SmoothingMode = "Adaptive", TrackingSmoothing = 0.025, TrackingRadius = 1.5, MotionFollow = 75,
             MaxAimSpeed = 360, Humanise = true, HumanStrength = 20, HitboxHysteresis = 8,
             RandomInterval = 0.8, RandomParts = {"Head", "Torso"}, ExcludedHitboxes = {}, ReactionTime = 0.025,
@@ -20896,6 +21113,7 @@ end
             Params.FilterDescendantsInstances = Ignore
             local Best = S.FOV * S.FOV
             local function Consider(Character)
+                if S.FriendlyCheck and Combat:IsFriendlyTarget(Character) then return end
                 local Humanoid = Combat:GetAimHumanoid(Character)
                 if not Humanoid or Humanoid.Health <= 0 then return end
                 local Part, Score, Point = self:GetTargetPart(Character, Camera, Origin, Center)
@@ -20991,6 +21209,7 @@ end
             if not Speed then return end
             C:SelectTarget(Camera)
             local Part = C.Part
+            if S.FriendlyCheck and Combat:IsFriendlyTarget(C.Target) then C:Invalidate(); return end
             local Humanoid = C.Target and C.Target:FindFirstChildOfClass("Humanoid")
             if not Part or not Part.Parent or not Humanoid or Humanoid.Health <= 0 then C:Invalidate(); return end
             if not self:PassHitChance() then return end
@@ -21064,6 +21283,7 @@ end
                 local Owner = Character and Players:GetPlayerFromCharacter(Character)
                 local TargetHumanoid = Character and Character:FindFirstChildOfClass("Humanoid")
                 return Owner ~= nil and Owner ~= Player and TargetHumanoid ~= nil and TargetHumanoid.Health > 0
+                    and (not S.FriendlyCheck or not Combat:IsFriendlyTarget(Character))
             end
             return false
         end
@@ -24564,6 +24784,7 @@ end
                 Min = 0, Max = 100, Decimals = 1, Suffix = "%",
                 Callback = function(Value) Legit.HitChance = Value end})
             LegitToggle("Vischeck", "VisCheck", "LegitAimVisCheck")
+            LegitToggle("Friendly check", "FriendlyCheck", "LegitAimFriendlyCheck")
             LegitToggle("Sticky target", "StickyTarget", "LegitAimStickyTarget")
             LegitToggle("Lock onto aim circle", "Lock", "LegitAimLock"):Keybind({
                 Flag = "LegitAimLockKeybind", Default = Enum.UserInputType.MouseButton2, Mode = "Hold",
@@ -24659,6 +24880,8 @@ end
                 Name = "Vischeck", Flag = "SilentAimVisCheck", Default = true,
                 Callback = function(Value) Aim.VisCheck = Value; CombatController:SelectTarget() end,
             })
+            SilentSection:Toggle({Name = "Friendly check", Flag = "SilentAimFriendlyCheck", Default = Aim.FriendlyCheck,
+                Callback = function(Value) Aim.FriendlyCheck = Value; CombatController:SelectTarget(true) end})
             SilentSection:Toggle({
                 Name = "Lead target", Flag = "SilentAimLead", Default = Aim.Lead,
                 Callback = function(Value) Aim.Lead = Value end,
@@ -24821,6 +25044,13 @@ end
         end
     end
 
+    if Library.AutoloadConfig then
+        local Success, Error = pcall(function()
+            local Loaded, Result = Library:LoadConfig(readfile(Library.Folders.Configs .. "/" .. Library.AutoloadConfig))
+            assert(Loaded, tostring(Result or "Could not apply config"))
+        end)
+        if not Success then Library:Notification("Autoload error", tostring(Error), 5) end
+    end
     if LoaderTransition and type(LoaderTransition.OnMenuReady) == "function" then
         local Success, Handled = pcall(LoaderTransition.OnMenuReady, LoaderTransition, Window, Library)
         if not Success or Handled ~= true then Window:SetOpen(true) end
