@@ -4888,7 +4888,13 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     Keybind:Set(Value)
                 end
 
-                local RegistryEntry = {Keybind = Keybind, Name = Data.Name or Keybind.Flag, Flag = Keybind.Flag}
+                local RegistryName = tostring(Data.Name or Keybind.Flag)
+                if RegistryName == "Enabled" then
+                    local FeatureName = tostring(Keybind.Flag):gsub("Keybind$", ""):gsub("Enabled$", "")
+                    FeatureName = FeatureName:gsub("(%l)(%u)", "%1 %2")
+                    if FeatureName ~= "" then RegistryName = FeatureName .. " Enabled" end
+                end
+                local RegistryEntry = {Keybind = Keybind, Name = RegistryName, Flag = Keybind.Flag}
                 TableInsert(Library.KeybindRegistry, RegistryEntry)
                 if Library.KeybindRegistryChanged then
                     Library:SafeCall(Library.KeybindRegistryChanged, RegistryEntry)
