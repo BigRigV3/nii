@@ -249,6 +249,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             KeyList = nil,
 
             Colorpickers = { },
+            KeybindRegistry = {},
+            KeybindRegistryChanged = nil,
         }
 
         Library.__index = Library
@@ -4574,6 +4576,27 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     return Keybind.Key, Keybind.Mode, Keybind.Toggled
                 end
 
+                function Keybind:BeginPick()
+                    if Keybind.Picking or Library.Unloaded then return end
+                    Keybind.Picking = true
+                    Items["KeyButton"].Instance.Text = "."
+                    local Capture
+                    Capture = Library:Connect(UserInputService.InputBegan, function(Input)
+                        if not Keybind.Picking then
+                            Capture.Connection:Disconnect()
+                            return
+                        end
+                        local Picked = Input.UserInputType == Enum.UserInputType.Keyboard
+                            and Input.KeyCode or Input.UserInputType
+                        Keybind:Set(Picked)
+                        Capture.Connection:Disconnect()
+                    end)
+                end
+
+                function Keybind:RefreshRegistryEntry()
+                    if Keybind.RegistryUpdate then Keybind.RegistryUpdate() end
+                end
+
                 function Keybind:Set(Key)
                     if StringFind(tostring(Key), "Enum") then 
                         Keybind.Key = tostring(Key)
@@ -4601,6 +4624,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         end
 
                         Update()
+                        Keybind:RefreshRegistryEntry()
                     elseif type(Key) == "table" then
                         local RealKey = tostring(Key.Key)
                         local IsUnassigned = RealKey == "None" or RealKey == "Backspace" or RealKey == "Enum.KeyCode.Backspace"
@@ -4629,6 +4653,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         end
 
                         Update()
+                        Keybind:RefreshRegistryEntry()
                     elseif TableFind({"Toggle", "Hold", "Always"}, Key) then
                         Keybind.Mode = Key
                         Keybind:SetMode(Keybind.Mode)
@@ -4723,6 +4748,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     end
 
                     Update()
+                    Keybind:RefreshRegistryEntry()
                 end
 
                 function Keybind:Press(Bool)
@@ -4782,6 +4808,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 end)
 
                 Library:Connect(UserInputService.InputBegan, function(Input)
+                    if Keybind.Picking then return end
                     if Keybind.Value == "None" then
                         return
                     end
@@ -4818,6 +4845,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 end)
 
                 Library:Connect(UserInputService.InputEnded, function(Input)
+                    if Keybind.Picking then return end
                     if Keybind.Value == "None" then
                         return
                     end
@@ -4858,6 +4886,12 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
 
                 Library.SetFlags[Keybind.Flag] = function(Value)
                     Keybind:Set(Value)
+                end
+
+                local RegistryEntry = {Keybind = Keybind, Name = Data.Name or Keybind.Flag, Flag = Keybind.Flag}
+                TableInsert(Library.KeybindRegistry, RegistryEntry)
+                if Library.KeybindRegistryChanged then
+                    Library:SafeCall(Library.KeybindRegistryChanged, RegistryEntry)
                 end
 
                 return Keybind, Items 
@@ -5810,6 +5844,20 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             end
 
             function KeybindList:Add(Key, Name, Mode)
+                local function ResizeToEntries()
+                    task.defer(function()
+                        local Frame = Items["KeybindList"].Instance
+                        if not Frame.Parent then return end
+                        local Width = Items["Title"].Instance.TextBounds.X
+                        for _, Entry in ipairs(Items["Content"].Instance:GetChildren()) do
+                            if Entry:IsA("TextLabel") and Entry.Visible then
+                                Width = math.max(Width, Entry.TextBounds.X)
+                            end
+                        end
+                        Frame.Size = UDim2New(0, math.max(116, math.ceil(Width) + 16), Frame.Size.Y.Scale, Frame.Size.Y.Offset)
+                    end)
+                end
+
                 local NewKey = Instances:Create("TextLabel", {
                     Parent = Items["Content"].Instance,
                     Name = "\0",
@@ -5831,15 +5879,18 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
 
                 function NewKey:SetText(Key, Name, Mode)
                     NewKey.Instance.Text = "" ..Key .." - " ..Name .. " ("..Mode..")"
+                    ResizeToEntries()
                 end
 
                 function NewKey:SetStatus(Bool)
                     if Bool then
                         NewKey.Instance.Visible = true
                         NewKey:Tween(nil, {TextTransparency = 0})
+                        ResizeToEntries()
                     else
                         NewKey:Tween(nil, {TextTransparency = 1}).Tween.Completed:Connect(function()
                             NewKey.Instance.Visible = false
+                            ResizeToEntries()
                         end)
                     end
                 end
@@ -8180,6 +8231,49 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                             end
                         })
                     end
+                end
+
+                local KeybindsSubPage = SettingsPage:SubPage({Name = "Keybinds", Columns = 1}) do
+                    local KeybindsSection = KeybindsSubPage:Section({Name = "Keybinds", Side = 1})
+                    local function AddKeybindEntry(Entry)
+                        local Target = Entry.Keybind
+                        local _, RowItems = Components:Label({
+                            Name = Entry.Name,
+                            Parent = KeybindsSection.Items["Content"],
+                            Page = KeybindsSubPage,
+                        })
+                        local BindButton = Instances:Create("TextButton", {
+                            Parent = RowItems["SubElements"].Instance,
+                            Name = "KeybindEditorButton",
+                            FontFace = Library.Font,
+                            TextColor3 = Library.Theme.Text,
+                            Text = "",
+                            TextSize = 9,
+                            AutoButtonColor = false,
+                            AutomaticSize = Enum.AutomaticSize.X,
+                            Size = UDim2New(0, 72, 0, 15),
+                            BackgroundTransparency = 0.25,
+                            BackgroundColor3 = Library.Theme.Element,
+                            BorderSizePixel = 0,
+                        })
+                        BindButton:AddToTheme({TextColor3 = "Text", BackgroundColor3 = "Element"})
+                        BindButton:TextBorder()
+
+                        local function Refresh()
+                            if not BindButton.Instance.Parent then return end
+                            BindButton.Instance.Text = Target.Value .. "  |  " .. Target.Mode
+                        end
+                        Target.RegistryUpdate = Refresh
+                        Refresh()
+                        BindButton:Connect("MouseButton1Click", function()
+                            if Target.Picking then return end
+                            BindButton.Instance.Text = "Press a key..."
+                            Target:BeginPick()
+                        end)
+                    end
+
+                    for _, Entry in ipairs(Library.KeybindRegistry) do AddKeybindEntry(Entry) end
+                    Library.KeybindRegistryChanged = AddKeybindEntry
                 end
             end
             
