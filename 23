@@ -21848,6 +21848,8 @@ end
             local function Set(Object, Property, Value)
                 if Object[Property] ~= Value then Object[Property] = Value end
             end
+            local Colors = {Color3.fromRGB(255, 210, 65), Color3.fromRGB(65, 190, 255),
+                Color3.fromRGB(245, 85, 125), Color3.fromRGB(65, 225, 185)}
             local function Create(Class, Properties)
                 local Object = Instance.new(Class)
                 for Key, Value in pairs(Properties) do Object[Key] = Value end
@@ -21864,26 +21866,23 @@ end
             end
             local function AddRow(Player)
                 local Frame = Create("Frame", {Parent = Gui, BackgroundTransparency = 1,
-                    Size = UDim2.fromOffset(294, 48)})
-                local Avatar = Create("ImageLabel", {Parent = Frame, BorderSizePixel = 0,
-                    BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 2),
-                    Size = UDim2.fromOffset(36, 36),
-                    Image = string.format("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150", Player.UserId)})
-                Create("UICorner", {Parent = Avatar, CornerRadius = UDim.new(1, 0)})
+                    Size = UDim2.fromOffset(270, 48)})
+                local Diamond = Create("Frame", {Parent = Frame, BorderSizePixel = 0,
+                    Position = UDim2.fromOffset(3, 9), Size = UDim2.fromOffset(9, 9), Rotation = 45})
                 local Name = Create("TextLabel", {Parent = Frame, BackgroundTransparency = 1,
-                    Position = UDim2.fromOffset(44, 0), Size = UDim2.fromOffset(180, 25),
-                    Font = Enum.Font.FredokaOne, TextSize = 19, TextColor3 = Color3.new(1, 1, 1),
+                    Position = UDim2.fromOffset(20, 0), Size = UDim2.fromOffset(180, 25),
+                    Font = Enum.Font.SourceSansSemibold, TextSize = 19, TextColor3 = Color3.new(1, 1, 1),
                     TextStrokeTransparency = 0.5, TextXAlignment = Enum.TextXAlignment.Left,
                     TextTruncate = Enum.TextTruncate.AtEnd, Text = Player.DisplayName})
                 local Status = Create("TextLabel", {Parent = Frame, BackgroundTransparency = 1,
-                    Position = UDim2.fromOffset(224, 0), Size = UDim2.fromOffset(60, 25),
-                    Font = Enum.Font.FredokaOne, TextSize = 15, TextColor3 = Color3.new(1, 1, 1),
+                    Position = UDim2.fromOffset(200, 0), Size = UDim2.fromOffset(60, 25),
+                    Font = Enum.Font.SourceSansSemibold, TextSize = 15, TextColor3 = Color3.new(1, 1, 1),
                     TextStrokeTransparency = 0.5, TextXAlignment = Enum.TextXAlignment.Right})
                 local Track = Create("Frame", {Parent = Frame, BorderSizePixel = 0,
                     BackgroundColor3 = Color3.fromRGB(20, 30, 20), BackgroundTransparency = 0.3,
-                    Position = UDim2.fromOffset(44, 28), Size = UDim2.fromOffset(240, 10)})
+                    Position = UDim2.fromOffset(20, 28), Size = UDim2.fromOffset(240, 10)})
                 local Bar = Create("Frame", {Parent = Track, BorderSizePixel = 0})
-                Rows[Player] = {Frame = Frame, Avatar = Avatar, Name = Name, Status = Status, Bar = Bar}
+                Rows[Player] = {Frame = Frame, Diamond = Diamond, Name = Name, Status = Status, Bar = Bar}
                 return Rows[Player]
             end
             local Connection = ConnectScheduled(game:GetService("RunService").Heartbeat, function(Delta)
@@ -21915,6 +21914,7 @@ end
                 for Index, Player in ipairs(Members) do
                     local Row = Rows[Player] or AddRow(Player)
                     Set(Row.Frame, "Position", UDim2.fromOffset(24, 70 + (Index - 1) * 48))
+                    Set(Row.Diamond, "BackgroundColor3", Colors[(Index - 1) % #Colors + 1])
                     Set(Row.Name, "Text", Player.DisplayName)
                     local Character = Player.Character
                     local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
