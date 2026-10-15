@@ -1545,14 +1545,17 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             if not Show then return end
             self.MenuBackgroundAnimation = self:Animate(function(Now)
                 for Index, Band in ipairs(self.MenuBackgroundBands) do
-                    Band.Gradient.Rotation = 25 * MathSin(Now * 0.08 + Index)
-                    Band.Frame.Position = UDim2New(0.5 + 0.18 * MathSin(Now * 0.06 + Index * 2), 0,
-                        0.3 + Index * 0.16 + 0.12 * MathSin(Now * 0.09 + Index), 0)
+                    local Phase = Now * 0.045 + Index * 1.7
+                    Band.Frame.Position = UDim2New(0.5 + 0.12 * MathSin(Phase), 0,
+                        Band.Y + 0.06 * MathSin(Phase * 0.7), 0)
+                    Band.Frame.Rotation = Band.Angle + 4 * MathSin(Phase * 0.6)
+                    Band.Frame.BackgroundTransparency = 0.9 + 0.025 * MathSin(Phase)
                 end
                 for _, Star in ipairs(self.MenuBackgroundStars) do
-                    Star.Frame.Position = UDim2New((Star.X + Now * Star.Speed) % 1, 0,
-                        (Star.Y - Now * Star.Speed * 0.4) % 1, 0)
-                    Star.Frame.BackgroundTransparency = 0.45 + 0.35 * MathSin(Now * 0.8 + Star.Phase)
+                    local Y = (Star.Y - Now * Star.Speed) % 1
+                    local Fade = math.min(1, Y * 8, (1 - Y) * 8)
+                    Star.Frame.Position = UDim2New(Star.X + 0.012 * MathSin(Now * 0.12 + Star.Phase), 0, Y, 0)
+                    Star.Frame.BackgroundTransparency = 1 - Fade * (0.12 + 0.16 * (0.5 + 0.5 * MathSin(Now * 0.35 + Star.Phase)))
                 end
             end)
         end
@@ -1570,38 +1573,57 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 self.MenuBackgroundGui = Gui
                 local Backdrop = Instances:Create("Frame", {
                     Parent = Gui, Size = UDim2New(1, 0, 1, 0), BorderSizePixel = 0,
-                    BackgroundTransparency = 0.2, ClipsDescendants = true,
+                    BackgroundTransparency = 0.08, ClipsDescendants = true,
                 })
-                Backdrop:AddToTheme({BackgroundColor3 = "Background"})
+                Backdrop:AddToTheme({BackgroundColor3 = function()
+                    return self.Theme.Background:Lerp(FromRGB(0, 0, 0), 0.4)
+                end})
+                local Wash = Instances:Create("Frame", {
+                    Parent = Backdrop.Instance, Size = UDim2New(1, 0, 1, 0),
+                    BackgroundTransparency = 0.88, BorderSizePixel = 0,
+                })
+                Wash:AddToTheme({BackgroundColor3 = "Accent"})
+                Instances:Create("UIGradient", {
+                    Parent = Wash.Instance, Rotation = 35,
+                    Transparency = NumSequence{
+                        NumSequenceKeypoint(0, 0.2), NumSequenceKeypoint(0.45, 1),
+                        NumSequenceKeypoint(0.65, 1), NumSequenceKeypoint(1, 0.4),
+                    },
+                })
                 self.MenuBackgroundBands, self.MenuBackgroundStars = {}, {}
-                for Index = 1, 3 do
+                for Index = 1, 5 do
+                    local Y = Index <= 3 and (-0.16 + Index * 0.13) or (0.85 + (Index - 4) * 0.18)
+                    local Angle = Index <= 3 and -24 or 24
                     local Band = Instances:Create("Frame", {
                         Parent = Backdrop.Instance, AnchorPoint = Vector2New(0.5, 0.5),
-                        Size = UDim2New(1.8, 0, 0.9, 0), BorderSizePixel = 0,
-                        BackgroundTransparency = 0.88, Rotation = Index * 15 - 30,
+                        Position = UDim2New(0.5, 0, Y, 0),
+                        Size = UDim2New(2.2, 0, 0.38 + Index * 0.025, 0), BorderSizePixel = 0,
+                        BackgroundTransparency = 0.92, Rotation = Angle,
                     })
                     Band:AddToTheme({BackgroundColor3 = "Accent"})
                     local Gradient = Instances:Create("UIGradient", {
                         Parent = Band.Instance, Rotation = 90,
                         Transparency = NumSequence{
-                            NumSequenceKeypoint(0, 1), NumSequenceKeypoint(0.3, 0.8),
-                            NumSequenceKeypoint(0.5, 0), NumSequenceKeypoint(0.7, 0.8), NumSequenceKeypoint(1, 1),
+                            NumSequenceKeypoint(0, 1), NumSequenceKeypoint(0.25, 0.96),
+                            NumSequenceKeypoint(0.42, 0.65), NumSequenceKeypoint(0.5, 0.15),
+                            NumSequenceKeypoint(0.58, 0.65), NumSequenceKeypoint(0.75, 0.96),
+                            NumSequenceKeypoint(1, 1),
                         },
                     })
-                    self.MenuBackgroundBands[Index] = {Frame = Band.Instance, Gradient = Gradient.Instance}
+                    self.MenuBackgroundBands[Index] = {Frame = Band.Instance, Y = Y, Angle = Angle}
                 end
                 local Randomizer = Random.new(761)
-                for Index = 1, 40 do
-                    local Size = Randomizer:NextInteger(1, 3)
+                for Index = 1, 28 do
+                    local Size = Randomizer:NextInteger(1, 2)
                     local Star = Instances:Create("Frame", {
                         Parent = Backdrop.Instance, Size = UDim2New(0, Size, 0, Size),
-                        BorderSizePixel = 0, ZIndex = 2,
+                        BorderSizePixel = 0, ZIndex = 2, BackgroundTransparency = 1,
                     })
                     Star:AddToTheme({BackgroundColor3 = "Accent"})
                     Instances:Create("UICorner", {Parent = Star.Instance, CornerRadius = UDimNew(1, 0)})
                     self.MenuBackgroundStars[Index] = {Frame = Star.Instance,
                         X = Randomizer:NextNumber(), Y = Randomizer:NextNumber(),
-                        Speed = Randomizer:NextNumber(0.002, 0.008), Phase = Randomizer:NextNumber(0, math.pi * 2)}
+                        Speed = Randomizer:NextNumber(0.004, 0.012), Phase = Randomizer:NextNumber(0, math.pi * 2)}
                 end
             end
             self:RefreshMenuBackground()
@@ -1927,6 +1949,32 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             end
         end
 
+        -- Lucide image assets from frappedevs/lucideblox; see LUCIDE-LICENSE.txt.
+        Library.Icons = {
+            flame = "rbxassetid://7733798747", activity = "rbxassetid://7733655755",
+            user = "rbxassetid://7743875962", users = "rbxassetid://7743876054",
+            crosshair = "rbxassetid://7733765307", wifi = "rbxassetid://7743878148",
+            flag = "rbxassetid://7733798691", server = "rbxassetid://7734053426",
+            timer = "rbxassetid://7743873443", clock = "rbxassetid://7733734848",
+            calendar = "rbxassetid://7733919198", settings = "rbxassetid://7734053495",
+            eye = "rbxassetid://7733774602", shield = "rbxassetid://7734056608",
+            box = "rbxassetid://7733917120", heart = "rbxassetid://7733956134",
+            search = "rbxassetid://7734052925", x = "rbxassetid://7743878857",
+            filter = "rbxassetid://7733798407", palette = "rbxassetid://7734021595",
+            wrench = "rbxassetid://7743878358", tag = "rbxassetid://7734075797",
+            coins = "rbxassetid://7743866529", key = "rbxassetid://7733965118",
+            keyboard = "rbxassetid://10723416765",
+        }
+        function Library:AddIcon(Parent, Name, Position, Size, Theme)
+            local Icon = InstanceNew("ImageLabel")
+            Icon.Name, Icon.BackgroundTransparency, Icon.BorderSizePixel = "Icon_" .. Name, 1, 0
+            Icon.Image, Icon.ScaleType = self.Icons[Name] or "", Enum.ScaleType.Fit
+            Icon.Position, Icon.Size = Position or UDim2New(), Size or UDim2New(0, 14, 0, 14)
+            Icon.ZIndex, Icon.Parent = Parent.ZIndex, Parent
+            self:AddToTheme(Icon, {ImageColor3 = Theme or "Accent"})
+            return Icon
+        end
+
         Library.IsMouseOverFrame = function(self, Frame, XOffset, YOffset)
             Frame = Frame.Instance
             XOffset = XOffset or 0 
@@ -2057,7 +2105,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         AnchorPoint = Vector2New(0, 0.5),
                         Size = UDim2New(0, 0, 0, 15),
                         BackgroundTransparency = 1,
-                        Position = UDim2New(0, 12, 0.5, 0),
+                        Position = UDim2New(0, 32, 0.5, 0),
                         BorderSizePixel = 0,
                         AutomaticSize = Enum.AutomaticSize.X,
                         TextSize = 9,
@@ -2066,6 +2114,12 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         return Page.Active and Library.Theme.Accent or Library.Theme.Text
                     end})
 
+                    local PageIcons = {Combat = "crosshair", Visuals = "eye", Misc = "wrench",
+                        Skinchanger = "palette", Settings = "settings", Other = "box"}
+                    Items["PageIcon"] = Library:AddIcon(Items["Inactive"].Instance, Data.Icon or PageIcons[Data.Name] or "box",
+                        UDim2New(0, 10, 0.5, -7), UDim2New(0, 14, 0, 14), function()
+                            return Page.Active and Library.Theme.Accent or Library.Theme.Text
+                        end)
                     Items["TextStroke"] = Items["Text"]:TextBorder()
 
                     Items["Glow"] = Instances:Create("Frame", {
@@ -2198,10 +2252,14 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     end
 
                     Page.Active = Bool 
+                    Items["PageIcon"].ImageColor3 = Bool and Library.Theme.Accent or Library.Theme.Text
                     
                     Debounce = true
                     Items["Page"].Instance.Visible = Bool or Page.LayoutFloating ~= nil
-                    Items["Page"].Instance.Parent = Page.LayoutFloating or (Bool and Data.ContentHolder.Instance or Library.UnusedHolder.Instance)
+                    local PageParent = Page.LayoutFloating or Data.ContentHolder.Instance
+                    if Items["Page"].Instance.Parent ~= PageParent then
+                        Items["Page"].Instance.Parent = PageParent
+                    end
 
                     if Page.Active then
                         Items["Inactive"]:ChangeItemTheme({BackgroundColor3 = "Element", BorderColor3 = "Border"})
@@ -2209,7 +2267,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         Items["ButtonBorder"]:Tween(nil, {Transparency = 0, Color = Library.Theme.Accent})
                         Items["Glow"]:Tween(nil, {BackgroundTransparency = 0})
                         Items["Liner"]:Tween(nil, {BackgroundTransparency = 0})
-                        Items["Text"]:Tween(nil, {Position = UDim2New(0, 16, 0.5, 0), TextColor3 = Library.Theme.Accent})
+                        Items["Text"]:Tween(nil, {Position = UDim2New(0, 36, 0.5, 0), TextColor3 = Library.Theme.Accent})
 
                         Library.CurrentPage = Page
                     else
@@ -2218,7 +2276,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         Items["ButtonBorder"]:Tween(nil, {Transparency = 0.3, Color = Library.Theme.Outline})
                         Items["Glow"]:Tween(nil, {BackgroundTransparency = 1})
                         Items["Liner"]:Tween(nil, {BackgroundTransparency = 1})
-                        Items["Text"]:Tween(nil, {Position = UDim2New(0, 12, 0.5, 0), TextColor3 = Library.Theme.Text})
+                        Items["Text"]:Tween(nil, {Position = UDim2New(0, 32, 0.5, 0), TextColor3 = Library.Theme.Text})
                     end
 
                      
@@ -2459,7 +2517,10 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     SubPage.Active = Bool 
                     Debounce = true
                     Items["Page"].Instance.Visible = Bool or SubPage.LayoutFloating ~= nil
-                    Items["Page"].Instance.Parent = SubPage.LayoutFloating or (Bool and Data.Page.Items["Columns"].Instance or Library.UnusedHolder.Instance)
+                    local PageParent = SubPage.LayoutFloating or Data.Page.Items["Columns"].Instance
+                    if Items["Page"].Instance.Parent ~= PageParent then
+                        Items["Page"].Instance.Parent = PageParent
+                    end
 
                     if SubPage.Active then
                         Items["Inactive"]:Tween(nil, {BackgroundTransparency = 0})
@@ -2534,36 +2595,6 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         BackgroundColor3 = FromRGB(38, 31, 33)
                     })  Items["Indicator"]:AddToTheme({BackgroundColor3 = "Element", BorderColor3 = "Border"})
 
-                    Items["Glow"] = {}
-                    for Layer = 1, 8 do
-                        local Spread = Layer + 1
-                        local Opacity = 1 - 0.24 * math.exp(-((Layer - 1) ^ 2) / 12)
-                        local Halo = Instances:Create("Frame", {
-                            Parent = Items["Indicator"].Instance,
-                            Name = "CheckboxGlow",
-                            AnchorPoint = Vector2New(0.5, 0.5),
-                            Position = UDim2New(0.5, 0, 0.5, 0),
-                            Size = UDim2New(1, Spread * 2, 1, Spread * 2),
-                            BackgroundTransparency = 1,
-                            BorderSizePixel = 0,
-                            Active = false,
-                        })
-                        Instances:Create("UICorner", {
-                            Parent = Halo.Instance,
-                            CornerRadius = UDimNew(0, Spread),
-                        })
-                        local Stroke = Instances:Create("UIStroke", {
-                            Parent = Halo.Instance,
-                            Color = Library.Theme.Accent,
-                            Thickness = 1,
-                            Transparency = 1,
-                            LineJoinMode = Enum.LineJoinMode.Round,
-                            ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-                        })
-                        Stroke:AddToTheme({Color = "Accent"})
-                        Items["Glow"][Layer] = {Stroke = Stroke, Opacity = Opacity}
-                    end
-
                     Items["IndicatorOutline"] = Instances:Create("UIStroke", {
                         Parent = Items["Indicator"].Instance,
                         Name = "\0",
@@ -2572,16 +2603,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         ApplyStrokeMode = Enum.ApplyStrokeMode.Border
                     })
                     Items["IndicatorOutline"]:AddToTheme({Color = function()
-                        return Toggle.Value and Library.Theme.Accent:Lerp(Library.Theme.Outline, 0.35) or Library.Theme.Outline
-                    end})
-
-                    Instances:Create("UIGradient", {
-                        Parent = Items["Indicator"].Instance,
-                        Name = "\0",
-                        Rotation = -165,
-                        Color = RGBSequence{RGBSequenceKeypoint(0, FromRGB(255, 255, 255)), RGBSequenceKeypoint(1, FromRGB(208, 208, 208))}
-                    }):AddToTheme({Color = function()
-                        return RGBSequence{RGBSequenceKeypoint(0, FromRGB(255, 255, 255)), RGBSequenceKeypoint(1, Library.Theme.Gradient)}
+                        return Toggle.Value and Library.Theme.Accent or Library.Theme.Outline
                     end})
 
                     Items["Text"] = Instances:Create("TextLabel", {
@@ -2645,18 +2667,13 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
 
                     if Toggle.Value then
                         Items["Indicator"]:ChangeItemTheme({BackgroundColor3 = "Accent", BorderColor3 = "Border"})
-                        Items["Indicator"]:Tween(nil, {BackgroundColor3 = Library.Theme.Accent})
+                        Items["Indicator"].Instance.BackgroundColor3 = Library.Theme.Accent
                     else
                         Items["Indicator"]:ChangeItemTheme({BackgroundColor3 = "Element", BorderColor3 = "Border"})
-                        Items["Indicator"]:Tween(nil, {BackgroundColor3 = Library.Theme.Element})
+                        Items["Indicator"].Instance.BackgroundColor3 = Library.Theme.Element
                     end
 
-                    for _, Glow in ipairs(Items["Glow"]) do
-                        Glow.Stroke:Tween(nil, {Transparency = Toggle.Value and Glow.Opacity or 1})
-                    end
-                    Items["IndicatorOutline"]:Tween(nil, {
-                        Color = Toggle.Value and Library.Theme.Accent:Lerp(Library.Theme.Outline, 0.35) or Library.Theme.Outline,
-                    })
+                    Items["IndicatorOutline"].Instance.Color = Toggle.Value and Library.Theme.Accent or Library.Theme.Outline
 
                     if Data.Callback then 
                         Library:SafeCall(Data.Callback, Toggle.Value)
@@ -2688,7 +2705,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     end
 
                     Items["Indicator"]:ChangeItemTheme({BackgroundColor3 = "Hovered Element", BorderColor3 = "Border"})
-                    Items["Indicator"]:Tween(nil, {BackgroundColor3 = Library.Theme["Hovered Element"]})
+                    Items["Indicator"].Instance.BackgroundColor3 = Library.Theme["Hovered Element"]
                 end)
 
                 Items["Toggle"]:OnHoverLeave(function()
@@ -2697,7 +2714,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     end
 
                     Items["Indicator"]:ChangeItemTheme({BackgroundColor3 = "Element", BorderColor3 = "Border"})
-                    Items["Indicator"]:Tween(nil, {BackgroundColor3 = Library.Theme["Element"]})
+                    Items["Indicator"].Instance.BackgroundColor3 = Library.Theme.Element
                 end)
 
                 Toggle:Set(Data.Default)
@@ -3838,12 +3855,12 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         BorderColor3 = FromRGB(12, 10, 11),
                         Text = "",
                         AutoButtonColor = false,
-                        Position = UDim2New(0, -123, 0, 0),
-                        Size = UDim2New(0, 15, 0, 15),
+                        Position = UDim2New(0, -124, 0, 0),
+                        Size = UDim2New(0, 16, 0, 16),
                         BorderSizePixel = 2,
                         TextSize = 14,
                         BackgroundColor3 = FromRGB(157, 175, 255)
-                    })  Items["ColorpickerButton"]:AddToTheme({BorderColor3 = "Border"})
+                    })  Items["ColorpickerButton"]:AddToTheme({BorderColor3 = "Border", BackgroundColor3 = "Border"})
 
                     Instances:Create("UIStroke", {
                         Parent = Items["ColorpickerButton"].Instance,
@@ -3856,9 +3873,9 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     Items["ColorpickerButtonInline"] = Instances:Create("Frame", {
                         Parent = Items["ColorpickerButton"].Instance,
                         Name = "\0",
-                        Position = UDim2New(0, 1, 0, 1),
+                        Position = UDim2New(0, 2, 0, 2),
                         BorderColor3 = FromRGB(0, 0, 0),
-                        Size = UDim2New(1, -2, 1, -2),
+                        Size = UDim2New(1, -4, 1, -4),
                         BorderSizePixel = 0,
                         BackgroundColor3 = FromRGB(157, 175, 255)
                     })
@@ -4456,6 +4473,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
 
                     Paint(Items["ColorpickerButton"], Colorpicker.Color, Immediate)
                     Paint(Items["ColorpickerButtonInline"], Colorpicker.Color, Immediate)
+                    Items["ColorpickerButton"].Instance.BackgroundColor3 = Library.Theme.Border
+                    Items["ColorpickerButtonInline"].Instance.BackgroundTransparency = Colorpicker.Alpha
 
                     UpdateSync(UpdateSyncc, Immediate)
 
@@ -5718,7 +5737,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 return Items["Watermark"].Instance.Visible
             end
 
-            function Watermark:SetText(Text)
+            function Watermark:SetText(Text, Icons)
                 local Fields = string.split(tostring(Text or ""), " | ")
                 for Index, Field in ipairs(Fields) do
                     local Cell = self.Cells[Index]
@@ -5733,22 +5752,31 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                             })
                             Separator:AddToTheme({BackgroundColor3 = "Outline"})
                         end
-                        local Label = Instances:Create("TextLabel", {
+                        local Holder = Instances:Create("Frame", {
                             Parent = Items["Content"].Instance, LayoutOrder = Index * 2,
+                            Size = UDim2New(0, 0, 0, 16), AutomaticSize = Enum.AutomaticSize.X,
+                            BackgroundTransparency = 1, BorderSizePixel = 0,
+                        })
+                        local Icon = Library:AddIcon(Holder.Instance, "flame", UDim2New(0, 0, 0, 1), UDim2New(0, 13, 0, 13))
+                        local Label = Instances:Create("TextLabel", {
+                            Parent = Holder.Instance,
+                            Position = UDim2New(0, 18, 0, 0),
                             Size = UDim2New(0, 0, 0, 16), AutomaticSize = Enum.AutomaticSize.X,
                             BackgroundTransparency = 1, BorderSizePixel = 0,
                             FontFace = Library.Font, TextSize = 10, Text = "",
                         })
                         Label:AddToTheme({TextColor3 = Index <= 2 and "Accent" or "Text"})
-                        Cell = {Label = Label.Instance, Separator = Separator and Separator.Instance}
+                        Cell = {Holder = Holder.Instance, Icon = Icon, Label = Label.Instance, Separator = Separator and Separator.Instance}
                         self.Cells[Index] = Cell
                     end
-                    Cell.Label.Text, Cell.Label.Visible = Field, true
+                    local IconName = Icons and Icons[Index] or (Index == 1 and "flame" or "tag")
+                    Cell.Icon.Image = Library.Icons[IconName] or Library.Icons.activity
+                    Cell.Label.Text, Cell.Holder.Visible = Field, true
                     if Cell.Separator then Cell.Separator.Visible = true end
                 end
                 for Index = #Fields + 1, #self.Cells do
                     local Cell = self.Cells[Index]
-                    Cell.Label.Visible = false
+                    Cell.Holder.Visible = false
                     if Cell.Separator then Cell.Separator.Visible = false end
                 end
             end
@@ -6050,13 +6078,14 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     Text = "Keybinds",
                     Size = UDim2New(0, 0, 0, 20),
                     BackgroundTransparency = 1,
-                    Position = UDim2New(0, 0, 0, -4),
+                    Position = UDim2New(0, 19, 0, -4),
                     BorderSizePixel = 0,
                     AutomaticSize = Enum.AutomaticSize.X,
                     TextSize = 9,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })  Items["Title"]:AddToTheme({TextColor3 = "Text"})
 
+                Library:AddIcon(Items["KeybindList"].Instance, "keyboard", UDim2New(0, 0, 0, -1), UDim2New(0, 12, 0, 12))
                 Items["Title"]:TextBorder()
 
                 Instances:Create("UIPadding", {
@@ -6698,18 +6727,29 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                                     if Name then Section = " / " .. Name; break end
                                     Ancestor = Ancestor.Parent
                                 end
-                                local Text = tostring(Entry.Name) .. " — " .. Path .. Section
+                                local Text
+                                if Entry.Kind == "Tab" then
+                                    Text = "TAB  ·  " .. Path
+                                elseif Entry.Kind == "Section" then
+                                    Text = "SECTION  ·  " .. Path .. " / " .. tostring(Entry.Name)
+                                else
+                                    Text = "FEATURE  ·  " .. tostring(Entry.Name) .. "  /  " .. Path .. Section
+                                end
                                 local Matches = true
                                 for Word in Query:gmatch("%S+") do
                                     if not StringFind(StringLower(Text), Word, 1, true) then Matches = false; break end
                                 end
                                 if Matches and Element and Element.Parent then
-                                    Results[#Results + 1] = {Text = Text, Page = Page, Element = Element}
+                                    local Rank = Entry.Kind == "Tab" and 1 or Entry.Kind == "Section" and 2 or 3
+                                    Results[#Results + 1] = {Text = Text, Page = Page, Element = Element, Rank = Rank}
                                 end
                             end
                         end
                     end
-                    table.sort(Results, function(A, B) return A.Text < B.Text end)
+                    table.sort(Results, function(A, B)
+                        if A.Rank ~= B.Rank then return A.Rank < B.Rank end
+                        return A.Text < B.Text
+                    end)
                 end
                 for Index, Result in ipairs(Results) do
                     local Row = ResultButtons[Index]
@@ -6753,7 +6793,6 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 end
             end)
 
-            Window:SetOpen(true)
             return setmetatable(Window, self)
         end
 
@@ -6782,6 +6821,9 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             })
             Library.SearchItems[Page] = nil
             Library.SearchItems[NewPage] = {}
+            TableInsert(Library.SearchItems[NewPage], {
+                Name = NewPage.Name, Kind = "Tab", Element = Items["Inactive"],
+            })
             return setmetatable(NewPage, Library.Pages)
         end
 
@@ -6806,6 +6848,10 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 Window = SubPage.Page.Window
             })
             Library.SearchItems[SubPage] = nil
+            Library.SearchItems[NewSubPage] = Library.SearchItems[NewSubPage] or {}
+            TableInsert(Library.SearchItems[NewSubPage], {
+                Name = NewSubPage.Name, Kind = "Tab", Element = NewSubPage.Items["Inactive"],
+            })
             return setmetatable(NewSubPage, Library.Pages)
         end
         
@@ -7269,6 +7315,11 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 Section.Items = Items
             end
 
+            local SearchEntries = Library.SearchItems[Section.Page]
+            if SearchEntries then
+                TableInsert(SearchEntries, {Name = Section.Name, Kind = "Section", Element = Items["Section"]})
+            end
+
             Library:RegisterLayoutItem("Section", Section, Items["Section"].Instance, Items["Section"].Instance,
                 Items["Section"].Instance.Parent, Section.Window, Section.Name)
             return setmetatable(Section, Library.Sections)
@@ -7402,13 +7453,6 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 Callback = Slider.Callback,
             })
 
-            if Slider.ToolTip then
-                SliderItems["Slider"]:Tooltip({
-                    Text = Slider.ToolTip.Name,
-                    Description = Slider.ToolTip.Description,
-                })
-            end
-
             local PageSearchData = Library.SearchItems[Slider.Page]
 
             if PageSearchData then
@@ -7451,13 +7495,6 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 Callback = Dropdown.Callback,
             })
 
-            if Dropdown.ToolTip then
-                DropdownItems["Dropdown"]:Tooltip({
-                    Text = Dropdown.ToolTip.Name,
-                    Description = Dropdown.ToolTip.Description,
-                })
-            end
-
             local PageSearchData = Library.SearchItems[Dropdown.Page]
 
             if PageSearchData then
@@ -7486,13 +7523,6 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 Parent = Label.Section.Items["Content"],
                 Page = Label.Page,
             })
-
-            if Tooltip then
-                LabelItems["Label"]:Tooltip({
-                    Text = Tooltip.Name,
-                    Description = Tooltip.Description,
-                })
-            end
 
             function NewLabel:Colorpicker(Data)
                 Data = Data or { }
@@ -7592,13 +7622,6 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 Finished = Textbox.Finished,
                 Callback = Textbox.Callback,
             })
-
-            if Textbox.ToolTip then
-                TextboxItems["Textbox"]:Tooltip({
-                    Text = Textbox.ToolTip.Name,
-                    Description = Textbox.ToolTip.Description
-                })
-            end
 
             local PageSearchData = Library.SearchItems[Textbox.Page]
 
@@ -8472,10 +8495,9 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     CustomSounds:Textbox({Name = "Roblox sound ID", Flag = "CustomHitsoundDraft", Default = "",
                         Placeholder = "Paste sound ID", Finished = true,
                         Callback = function(Value) SoundDraft = tostring(Value or "") end})
-                    local SoundStatus = CustomSounds:Label("Added sounds save with this config")
                     CustomSounds:Button():Add("Add sound", function()
                         local OK, Name = Library:AddCustomHitsound(SoundDraft)
-                        SoundStatus:SetText(OK and (Name .. " added to Hit and Kill presets") or "Enter a valid Roblox sound ID")
+                        Library:Notification("Custom sounds", OK and (Name .. " added to Hit and Kill presets") or "Enter a valid Roblox sound ID", 4)
                     end)
                     local MenuSoundsSection = SettingsSubPage:Section({Name = "Menu sounds", Side = 2})
                     for _, SoundName in ipairs({"Hover", "Click"}) do
@@ -8524,7 +8546,6 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                             Name = "Aero snap previews", Flag = "UIAeroSnapPreview", Default = true,
                             Callback = function(Value) Library.LayoutEditor:SetPreviewEnabled(Value) end,
                         })
-                        SettingsSection:Label("Hold right-click on headers to drag")
                         SettingsSection:Button():Add("Reset layout", function() Library.LayoutEditor:Reset() end)
 
                         SettingsSection:Slider({
@@ -14579,18 +14600,14 @@ local function BuildEffectsMenu(E, UIPage, LightingPage, WorldDetailPage, LocalP
     E.AutoWalk.Bind = Movement:Label("Auto walk"):Keybind({
         Flag = "AutoWalkKeybind", Default = Enum.KeyCode.F7, Mode = "Hold",
     })
-    Movement:Label("Press bind to sprint forward / W or Shift to stop")
     BoundToggle(Movement, "Spiderman", "SpiderEnabled", E.Spider, "Enabled", "SpiderKeybind")
     Slider(Movement, "Climb speed", "SpiderSpeed", E.Spider, "Speed", 1, 50, 0.1, " studs/s")
-    Movement:Label("Spiderman: face a wall with head and leg in reach")
     local Blink = PlayerPage:Section({Name = "Blink", Side = 1})
     BoundToggle(Blink, "Enabled", "BlinkEnabled", E.Blink, "Enabled", "BlinkKeybind")
     Slider(Blink, "Speed", "BlinkSpeed", E.Blink, "Speed", 1, 50, 0.1, " studs/s")
     Toggle(Blink, "Restore position", "BlinkRestore", E.Blink, "Restore")
     Slider(Blink, "Restoration delay", "BlinkRestoreDelay", E.Blink, "RestoreDelay", 0, 3, 0.1, " s")
     Toggle(Blink, "Show saved / current positions", "BlinkShowPositions", E.Blink, "ShowPositions")
-    Blink:Label("WASD move / Q E down up")
-    Blink:Label("Red: saved position / Blue: current position")
     Movement:Toggle({Name = "No fall damage", Flag = "MiscNoFallEnabled", Default = false,
         Callback = function(Value) E:SetNoFall(Value) end})
     Movement:Toggle({Name = "Omni sprint", Flag = "OmniSprintEnabled", Default = E.OmniSprint.Enabled,
@@ -14602,14 +14619,87 @@ local function BuildEffectsMenu(E, UIPage, LightingPage, WorldDetailPage, LocalP
     Toggle(Freecam, "Camera smoothing", "FreecamSmoothing", E.Freecam, "Smoothing")
     Slider(Freecam, "Smoothing time", "FreecamSmoothTime", E.Freecam, "SmoothTime", 0.02, 1, 0.01, " s")
     Toggle(Freecam, "Show original position", "FreecamShowPosition", E.Freecam, "ShowPosition")
-    Freecam:Label("WASD move / Q E down up / Shift boost")
-    Freecam:Label("Mouse to look / F6 toggle")
     Movement:Toggle({Name = "Silent steps", Flag = "SilentStepsEnabled", Default = E.SilentSteps.Enabled,
         Callback = function(Value) E:SetSilentSteps(Value) end})
     Dropdown(Movement, "Silent steps method", "SilentStepsMethod", E.SilentSteps, "Method", {"Local mute", "Sliding", "Animated"}, function()
         if E.RestoreStepVelocity then E.RestoreStepVelocity() end
     end)
     local Crosshair = UIPage:Section({Name = "Crosshair", Side = 1})
+    local GameUIColors = UIPage:Section({Name = "Game UI colors", Side = 2})
+    local GameUIColorSettings = {Enabled = false, Color = Library.Theme.Accent, Strength = 0.45}
+    local PlayerGui = game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    local OriginalUIColors, GameUIObjects, GameUIObjectSet = {}, {}, {}
+    local function ApplyGameUIColor(Object)
+        if not GameUIColorSettings.Enabled or not Object or not Object:IsA("GuiObject") then return end
+        if Object.BackgroundTransparency >= 1 then return end
+        local Entry = OriginalUIColors[Object]
+        if not Entry then
+            Entry = {Original = Object.BackgroundColor3}
+            OriginalUIColors[Object] = Entry
+            if not GameUIObjectSet[Object] then
+                GameUIObjectSet[Object] = true
+                GameUIObjects[#GameUIObjects + 1] = Object
+            end
+        end
+        Entry.Applied = Entry.Original:Lerp(GameUIColorSettings.Color, GameUIColorSettings.Strength)
+        if Object.BackgroundColor3 ~= Entry.Applied then
+            pcall(function() Object.BackgroundColor3 = Entry.Applied end)
+        end
+    end
+    local function RestoreGameUIColors()
+        for Object, Entry in pairs(OriginalUIColors) do
+            pcall(function()
+                if Object.Parent and Object.BackgroundColor3 == Entry.Applied then
+                    Object.BackgroundColor3 = Entry.Original
+                end
+            end)
+        end
+        table.clear(OriginalUIColors)
+        table.clear(GameUIObjects)
+        table.clear(GameUIObjectSet)
+    end
+    local function QueueGameUIColorRefresh()
+        if not GameUIColorSettings.Enabled or not PlayerGui then return end
+        if not next(OriginalUIColors) then
+            local Descendants = PlayerGui:GetDescendants()
+            for _, Object in ipairs(Descendants) do
+                if Object:IsA("GuiObject") and Object.BackgroundTransparency < 1 then
+                    local Entry = {Original = Object.BackgroundColor3}
+                    OriginalUIColors[Object] = Entry
+                    GameUIObjectSet[Object] = true
+                    GameUIObjects[#GameUIObjects + 1] = Object
+                end
+            end
+        end
+        for _, Object in ipairs(GameUIObjects) do ApplyGameUIColor(Object) end
+    end
+    GameUIColors:Toggle({Name = "Enabled", Flag = "GameUIColorEnabled", Default = false,
+        Callback = function(Value)
+            GameUIColorSettings.Enabled = Value == true
+            if GameUIColorSettings.Enabled then QueueGameUIColorRefresh() else RestoreGameUIColors() end
+        end})
+    GameUIColors:Label("Tint"):Colorpicker({Name = "Tint", Flag = "GameUIColor", Default = GameUIColorSettings.Color,
+        Callback = function(Value) GameUIColorSettings.Color = Value end})
+    GameUIColors:Slider({Name = "Strength", Flag = "GameUIColorStrength", Default = GameUIColorSettings.Strength,
+        Min = 0, Max = 1, Decimals = 0.05, Callback = function(Value)
+            GameUIColorSettings.Strength = Value
+        end})
+    GameUIColors:Button():Add("Apply tint", QueueGameUIColorRefresh)
+    local UIColorAddedConnection
+    if PlayerGui then
+        UIColorAddedConnection = PlayerGui.DescendantAdded:Connect(function(Object)
+            if Object:IsA("GuiObject") and Object.BackgroundTransparency < 1 then
+                ApplyGameUIColor(Object)
+                if GameUIObjectSet[Object] then return end
+                GameUIObjectSet[Object] = true
+                GameUIObjects[#GameUIObjects + 1] = Object
+            end
+        end)
+    end
+    table.insert(UnloadCallbacks, function()
+        if UIColorAddedConnection then UIColorAddedConnection:Disconnect() end
+        RestoreGameUIColors()
+    end)
     local C = E.Crosshair
     Toggle(Crosshair, "Enabled", "CrosshairEnabled", C, "Enabled", true)
     Toggle(Crosshair, "Hide when scoped", "CrosshairHideScoped", C, "HideScoped")
@@ -14657,7 +14747,6 @@ local function BuildEffectsMenu(E, UIPage, LightingPage, WorldDetailPage, LocalP
     Toggle(BossTracker, "Hide while in menus", "BossTrackerHideInMenus", E.BossTracker, "HideInMenus")
     Toggle(BossTracker, "Track Whisper hits", "WhisperTrackHits", E.BossTracker, "TrackWhisperHits")
     Toggle(BossTracker, "Whisper body / loot finder", "WhisperLootFinder", E.BossTracker, "WhisperLootFinder")
-    BossTracker:Label("Counts your reported hits toward the first 10")
     local BossTrackerX = Slider(BossTracker, "Position X", "BossTrackerX", E.BossTracker, "X", 0, 7680, 1)
     local BossTrackerY = Slider(BossTracker, "Position Y", "BossTrackerY", E.BossTracker, "Y", 0, 4320, 1)
     BossTrackerX:SetVisibility(false); BossTrackerY:SetVisibility(false)
@@ -14752,7 +14841,6 @@ local function BuildEffectsMenu(E, UIPage, LightingPage, WorldDetailPage, LocalP
     local A = E.AntiAim
     local Position = AntiAimPage:Section({Name = "Server position", Side = 1})
     Toggle(Position, "Visualize", "AntiAimVisualize", A, "Visualize", true)
-    Position:Label("Fake character at the estimated server position")
     Toggle(Position, "Only in third person", "AntiAimThirdPersonOnly", A, "ThirdPersonOnly")
     Dropdown(Position, "Material", "AntiAimMaterial", A, "Material", Materials)
     Slider(Position, "Transparency", "AntiAimTransparency", A, "Transparency", 0, 1, 0.05)
@@ -14773,7 +14861,6 @@ local function BuildEffectsMenu(E, UIPage, LightingPage, WorldDetailPage, LocalP
     Slider(UndergroundSection, "Animation timestamp", "UndergroundFreezeTime", Underground, "FreezeTime", 0, 60, 0.05, " s")
     local Yaw = AntiAimPage:Section({Name = "Fake yaw", Side = 2})
     BoundToggle(Yaw, "Enabled", "FakeYawEnabled", A, "Yaw", "FakeYawKeybind")
-    Yaw:Label("Preset: backwards")
     local YawSlider
     Yaw:Toggle({Name = "Manual", Flag = "FakeYawManual", Default = false, Callback = function(Value) A.ManualYaw = Value; if YawSlider then YawSlider:SetVisibility(Value) end end})
     YawSlider = Slider(Yaw, "Angle", "FakeYawAmount", A, "YawAmount", -180, 180, 1, " deg")
@@ -16458,11 +16545,11 @@ end
             Presence.Users[Player.UserId] = nil
         end)
         local Status
+        local PresenceToggle
         function Presence:BuildSettingsPage(SettingsPage)
             local PresencePage = SettingsPage:SubPage({Name = "Cinnamon users", Columns = 1})
             local Controls = PresencePage:Section({Name = "Cinnamon users", Side = 1})
-            Controls:Label("Share your presence and see Cinnamon users in this server")
-            Controls:Toggle({Name = "Cinnamon presence", Flag = "CinnamonPresenceEnabled", Default = true,
+            PresenceToggle = Controls:Toggle({Name = "Cinnamon presence · 0 online", Flag = "CinnamonPresenceEnabled", Default = true,
                 Callback = function(Value) Presence:SetEnabled(Value) end})
             Status = Controls:Label("Presence disabled")
         end
@@ -16472,6 +16559,9 @@ end
             local Count = 0
             for _, Player in ipairs(Players:GetPlayers()) do
                 if Player ~= LocalPlayer and Presence:IsUser(Player) then Count += 1 end
+            end
+            if PresenceToggle then
+                PresenceToggle:SetText("Cinnamon presence · " .. tostring(Count) .. " online")
             end
             Status:SetText(not Presence.Enabled and "Presence disabled"
                 or type(Send) ~= "function" and "Your executor does not support HTTP requests"
@@ -16492,6 +16582,219 @@ end
                 end)
             end
         end
+    end
+    -- Shared virtual item table for loot filters and wishlists.
+    function Library:ItemSelectionList(Title, Flag, OnChanged)
+        local Widget = {Selected = {}, Rows = {}, Entries = {}, Filtered = {}, Connections = {}}
+        local SortKey, Descending, Query = "Value", true, ""
+        local CatalogRevision, Dead = -1, false
+        local Root = New("Frame", Library.Holder.Instance, {Name = "ItemFilterWishlist",
+            Visible = false, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.fromOffset(690, 590), BackgroundColor3 = Library.Theme.Background,
+            BorderColor3 = Library.Theme.Outline, BorderSizePixel = 1, Active = true},
+            {BackgroundColor3 = "Background", BorderColor3 = "Outline"})
+        local TitleBar = New("TextButton", Root, {Text = "", AutoButtonColor = false,
+            BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 30), Active = true})
+        Library:AddIcon(TitleBar, Flag == "WishlistItems" and "heart" or "filter", UDim2.fromOffset(7, 8), UDim2.fromOffset(14, 14))
+        local Heading = Text(TitleBar, "Title", Title, UDim2.fromOffset(27, 0), UDim2.new(1, -244, 1, 0))
+        Library:AddToTheme(Heading, {TextColor3 = "Accent"})
+        local Search = New("TextBox", TitleBar, {Text = "", PlaceholderText = "search...",
+            ClearTextOnFocus = false, FontFace = Library.Font, TextSize = 10,
+            TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Library.Theme.Text,
+            PlaceholderColor3 = Library.Theme["Placeholder Text"], BackgroundColor3 = Library.Theme.Inline,
+            BorderColor3 = Library.Theme.Outline, Position = UDim2.new(1, -188, 0, 6),
+            Size = UDim2.fromOffset(157, 19)},
+            {TextColor3 = "Text", BackgroundColor3 = "Inline", BorderColor3 = "Outline", PlaceholderColor3 = "Placeholder Text"})
+        Library:AddIcon(TitleBar, "search", UDim2.new(1, -183, 0, 9), UDim2.fromOffset(12, 12), "Placeholder Text")
+        New("UIPadding", Search, {PaddingLeft = UDim.new(0, 22)})
+        local Close = New("TextButton", TitleBar, {Text = "", AutoButtonColor = false,
+            FontFace = Library.Font, TextSize = 11, TextColor3 = Library.Theme.Text,
+            BackgroundTransparency = 1, Position = UDim2.new(1, -27, 0, 3),
+            Size = UDim2.fromOffset(24, 24)}, {TextColor3 = "Text"})
+        Library:AddIcon(Close, "x", UDim2.fromOffset(5, 5), UDim2.fromOffset(14, 14), "Text")
+        local Header = New("Frame", Root, {BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(7, 30), Size = UDim2.new(1, -14, 0, 25)})
+        local Scroll = New("ScrollingFrame", Root, {BackgroundTransparency = 1, BorderSizePixel = 0,
+            Position = UDim2.fromOffset(7, 56), Size = UDim2.new(1, -14, 1, -80),
+            CanvasSize = UDim2.new(), ScrollBarThickness = 2, ScrollingDirection = Enum.ScrollingDirection.Y,
+            ScrollBarImageColor3 = Library.Theme.Accent, ClipsDescendants = true}, {ScrollBarImageColor3 = "Accent"})
+        local Footer = Text(Root, "Count", "", UDim2.new(0, 8, 1, -22), UDim2.new(1, -16, 0, 20))
+        Library:AddToTheme(Footer, {TextColor3 = "Placeholder Text"})
+        local Empty = Text(Scroll, "Empty", "No items match this search", UDim2.fromOffset(8, 5), UDim2.new(1, -16, 0, 25))
+        local Headers = {}
+        local Columns = {{"Name", 0.055, 0.375}, {"Value", 0.43, 0.18}, {"Type", 0.61, 0.25}, {"Options", 0.87, 0.13}}
+        local Paint, Filter
+        function Widget:SetSelection(Values)
+            table.clear(self.Selected)
+            for _, Name in ipairs(type(Values) == "table" and Values or {}) do self.Selected[Name] = true end
+            if Root.Visible then Paint() end
+        end
+        local function Toggle(Name)
+            Widget.Selected[Name] = not Widget.Selected[Name] or nil
+            local Values = {}
+            for SelectedName in pairs(Widget.Selected) do Values[#Values + 1] = SelectedName end
+            table.sort(Values)
+            Library.Flags[Flag] = Values
+            OnChanged(Values)
+            Paint()
+        end
+        local function Label(Parent, Name, X, Width)
+            local Item = Text(Parent, Name, "", UDim2.new(X, 0, 0, 0), UDim2.new(Width, -5, 1, 0))
+            Library:AddToTheme(Item, {TextColor3 = "Text"})
+            return Item
+        end
+        local function CreateRow()
+            local Row = {}
+            Row.Button = New("TextButton", Scroll, {Text = "", AutoButtonColor = false,
+                Size = UDim2.new(1, -6, 0, 32), BorderSizePixel = 0})
+            Row.Icon = New("ImageLabel", Row.Button, {BackgroundTransparency = 1,
+                BorderSizePixel = 1, BorderColor3 = Library.Theme.Outline,
+                Position = UDim2.fromOffset(4, 3), Size = UDim2.fromOffset(26, 26), ScaleType = Enum.ScaleType.Fit},
+                {BorderColor3 = "Outline"})
+            Row.Name = Label(Row.Button, "Name", 0.055, 0.375)
+            Library.ThemeMap[Row.Name].Properties.TextColor3 = function()
+                return Row.Entry and (Widget.Selected[Row.Entry.Id] and Library.Theme.Accent or Row.Entry.Color) or Library.Theme.Text
+            end
+            Row.Value = Label(Row.Button, "Value", 0.43, 0.18)
+            Row.Type = Label(Row.Button, "ItemType", 0.61, 0.25)
+            Row.Check = New("Frame", Row.Button, {Position = UDim2.new(0.87, 0, 0.5, -4),
+                Size = UDim2.fromOffset(8, 8), BorderSizePixel = 1, BorderColor3 = Library.Theme.Outline}, {BorderColor3 = "Outline"})
+            Row.Enabled = Text(Row.Button, "Enabled", "Enabled", UDim2.new(0.87, 16, 0, 0), UDim2.new(0.13, -16, 1, 0))
+            Library:AddToTheme(Row.Enabled, {TextColor3 = "Text"})
+            Library:AddToTheme(Row.Button, {BackgroundColor3 = function()
+                return (Row.Index or 1) % 2 == 0 and Library.Theme.Background or Library.Theme.Inline
+            end})
+            Library:AddToTheme(Row.Check, {BackgroundColor3 = function()
+                return Row.Entry and Widget.Selected[Row.Entry.Id] and Library.Theme.Accent or Library.Theme.Background
+            end})
+            Connect(Row.Button.Activated, function() if Row.Entry then Toggle(Row.Entry.Id) end end, Widget.Connections)
+            Library:RaisePopup(Row.Button, 71)
+            return Row
+        end
+        Paint = function()
+            if Dead or not Root.Visible then return end
+            local Count = #Widget.Filtered
+            local ScaledHeight = 32 * (Library.MenuScale or 1)
+            local Needed = math.ceil(Scroll.AbsoluteSize.Y / ScaledHeight) + 2
+            while #Widget.Rows < Needed do Widget.Rows[#Widget.Rows + 1] = CreateRow() end
+            local First = math.max(0, math.floor(Scroll.CanvasPosition.Y / ScaledHeight))
+            for Index, Row in ipairs(Widget.Rows) do
+                local At = First + Index
+                local Entry = Index <= Needed and Widget.Filtered[At] or nil
+                Row.Entry, Row.Index, Row.Button.Visible = Entry, At, Entry ~= nil
+                if Entry then
+                    local Selected = Widget.Selected[Entry.Id] == true
+                    Row.Button.Position = UDim2.fromOffset(0, (At - 1) * 32)
+                    Row.Button.BackgroundColor3 = At % 2 == 0 and Library.Theme.Background or Library.Theme.Inline
+                    Row.Icon.Image, Row.Name.Text = Entry.Icon, Entry.Name
+                    Row.Name.TextColor3 = Selected and Library.Theme.Accent or Entry.Color
+                    Row.Value.Text, Row.Type.Text = Entry.ValueText, Entry.Type
+                    Row.Check.BackgroundColor3 = Selected and Library.Theme.Accent or Library.Theme.Background
+                end
+            end
+            local SelectedCount = 0
+            for _ in pairs(Widget.Selected) do SelectedCount += 1 end
+            Footer.Text = Count .. " items | " .. SelectedCount .. " selected"
+            Empty.Visible = Count == 0
+        end
+        Filter = function()
+            local Matches = {}
+            for _, Entry in ipairs(Widget.Entries) do
+                if Query == "" or Entry.Search:find(Query, 1, true) then Matches[#Matches + 1] = Entry end
+            end
+            table.sort(Matches, function(A, B)
+                local AV, BV = A[SortKey], B[SortKey]
+                if AV == BV then return A.Id < B.Id end
+                if Descending then return AV > BV end
+                return AV < BV
+            end)
+            Widget.Filtered = Matches
+            Scroll.CanvasSize = UDim2.fromOffset(0, #Matches * 32)
+            Scroll.CanvasPosition = Vector2.zero
+            for Key, Button in pairs(Headers) do
+                Button.Text = (Key == "Type" and "Item Type" or Key) .. (Key == SortKey and (Descending and " v" or " ^") or "")
+            end
+            Paint()
+        end
+        for _, Column in ipairs(Columns) do
+            local Key = Column[1]
+            local Button = New("TextButton", Header, {Text = Key == "Type" and "Item Type" or Key, BackgroundTransparency = 1,
+                AutoButtonColor = false, FontFace = Library.Font, TextSize = 10, TextColor3 = Library.Theme["Placeholder Text"],
+                TextXAlignment = Enum.TextXAlignment.Left, Position = UDim2.fromScale(Column[2], 0),
+                Size = UDim2.fromScale(Column[3], 1)}, {TextColor3 = "Placeholder Text"})
+            if Key ~= "Options" then
+                Headers[Key] = Button
+                Connect(Button.Activated, function()
+                    if SortKey == Key then Descending = not Descending else SortKey, Descending = Key, Key == "Value" end
+                    Filter()
+                end, Widget.Connections)
+            end
+        end
+        function Widget:Refresh()
+            if Dead or not Root.Visible then return end
+            local CurrentRevision = ItemValues and ItemValues.Revision or 0
+            if CatalogRevision ~= CurrentRevision then
+                CatalogRevision = CurrentRevision
+                table.clear(self.Entries)
+                local Catalog = ReplicatedStorage:FindFirstChild("ItemsList")
+                for _, Template in ipairs(Catalog and Catalog:GetChildren() or {}) do
+                    local Props = Template:FindFirstChild("ItemProperties")
+                    if Props then
+                        local Name = tostring(Props:GetAttribute("ItemName") or Template.Name)
+                        local Icon = Props:FindFirstChild("ItemIcon")
+                        local Low, High = ItemValues:Value(Template, 1, Template.Name)
+                        local _, Color = ItemValues:Rarity(Template, Name)
+                        local Kind = tostring(Props:GetAttribute("ItemType") or "Other"):gsub("(%l)(%u)", "%1 %2")
+                        self.Entries[#self.Entries + 1] = {Id = Template.Name, Name = Name,
+                            Value = Low or 0, ValueText = Low and ItemValues:Format(Low, High) or "Unknown",
+                            Type = Kind, Color = Color or Library.Theme.Text,
+                            Icon = Icon and (Icon:IsA("ImageLabel") or Icon:IsA("ImageButton")) and Icon.Image or "",
+                            Search = (Name .. " " .. Template.Name .. " " .. Kind):lower()}
+                    end
+                end
+                Filter()
+            else Paint() end
+        end
+        function Widget:Open()
+            local Camera = workspace.CurrentCamera
+            local Viewport = Camera and Camera.ViewportSize or Vector2.new(1920, 1080)
+            local Scale = Library.MenuScale or 1
+            Root.Size = UDim2.fromOffset(math.min(690, Viewport.X / Scale - 24), math.min(590, Viewport.Y / Scale - 60))
+            Root.Visible = true
+            self:SetSelection(Library.Flags[Flag] or {})
+            self:Refresh()
+        end
+        Connect(Close.Activated, function() Root.Visible = false end, Widget.Connections)
+        Connect(Search:GetPropertyChangedSignal("Text"), function() Query = Search.Text:lower(); Filter() end, Widget.Connections)
+        Connect(Scroll:GetPropertyChangedSignal("CanvasPosition"), Paint, Widget.Connections)
+        Connect(Scroll:GetPropertyChangedSignal("AbsoluteSize"), Paint, Widget.Connections)
+        local Drag, Origin, Start
+        local Input = game:GetService("UserInputService")
+        Connect(TitleBar.InputBegan, function(Event)
+            if Event.UserInputType == Enum.UserInputType.MouseButton1 then Drag, Origin, Start = true, Event.Position, Root.Position end
+        end, Widget.Connections)
+        Connect(Input.InputEnded, function(Event)
+            if Event.UserInputType == Enum.UserInputType.MouseButton1 then Drag = false end
+        end, Widget.Connections)
+        Connect(Input.InputChanged, function(Event)
+            if Drag and Event.UserInputType == Enum.UserInputType.MouseMovement then
+                local Delta = Event.Position - Origin
+                Root.Position = Start + UDim2.fromOffset(Delta.X, Delta.Y)
+            end
+        end, Widget.Connections)
+        Library:RaisePopup(Root, 70)
+        UnloadCallbacks[#UnloadCallbacks + 1] = function()
+            Dead = true
+            for _, Connection in ipairs(Widget.Connections) do Connection:Disconnect() end
+            local Owned = {[Root] = true}
+            for _, Object in ipairs(Root:GetDescendants()) do Owned[Object] = true end
+            for Index = #Library.ThemeItems, 1, -1 do
+                local Entry = Library.ThemeItems[Index]
+                if Owned[Entry.Item] then Library.ThemeMap[Entry.Item] = nil; table.remove(Library.ThemeItems, Index) end
+            end
+            Root:Destroy()
+        end
+        return Widget
     end
     local ServerPage = Page:SubPage({Name = "Servers", Columns = 1})
     local QuestPage = Page:SubPage({Name = "Quests", Columns = 2})
@@ -16545,15 +16848,22 @@ end
             Viewer:SetItems(Entries)
             Viewer:SetStats(#Entries .. " wishlist items | Inventory + stash")
         end
-        Selection:Searchbox({Name = "Select wishlist items", Flag = "WishlistItems", Items = Names,
-            Multi = true, Default = {}, Callback = function(Value)
-                Selected = {}
-                for _, Name in ipairs(type(Value) == "table" and Value or {}) do
-                    if table.find(Names, Name) and not table.find(Selected, Name) then Selected[#Selected + 1] = Name end
-                end
-                table.sort(Selected)
-                Refresh()
-            end})
+        local WishlistList
+        local function SetWishlist(Value)
+            Selected = {}
+            for _, Name in ipairs(type(Value) == "table" and Value or {}) do
+                if table.find(Names, Name) and not table.find(Selected, Name) then Selected[#Selected + 1] = Name end
+            end
+            table.sort(Selected)
+            Library.Flags.WishlistItems = table.clone(Selected)
+            if WishlistList then WishlistList:SetSelection(Selected) end
+            Refresh()
+        end
+        WishlistList = Library:ItemSelectionList("Item Filter & Wishlist", "WishlistItems", SetWishlist)
+        Library.SetFlags.WishlistItems = SetWishlist
+        SetWishlist(Library.Flags.WishlistItems or {})
+        Selection:Label("Choose items using the searchable table")
+        Selection:Button():Add("Open wishlist", function() WishlistList:Open() end)
         Display:Toggle({Name = "Show wishlist viewer", Flag = "WishlistViewerEnabled", Default = false,
             Callback = function(Value) Showing = Value; Viewer:SetVisibility(Value); Refresh() end})
         Display:Dropdown({Name = "Viewer mode", Flag = "WishlistViewerMode", Items = {"Grid", "Text"},
@@ -17264,7 +17574,7 @@ return function(Library, Page, UnloadCallbacks)
     local Actions = Page:Section({Name = "Quest actions", Side = 2})
     local Summary = Section:Label("Reading quest progress...")
     local Route = Section:Label("No quest item selected")
-    local Result = Actions:Label("Actions use the game's quest validation")
+    local Result = Actions:Label("Ready")
     if not API then Result:SetText("Quests are unavailable in this game mode") end
     local Viewer = Library:InventoryViewer("Quest objectives", UDim2.fromOffset(30, 430))
     Viewer:SetVisibility(false)
@@ -17883,179 +18193,26 @@ return function(Library, Page, UnloadCallbacks, ItemValues)
     local Retry = setmetatable({}, {__mode = "k"})
     local Controls = Page:Section({Name = "Auto loot", Side = 1})
     local Selection = Page:Section({Name = "Items to loot", Side = 2})
-    local Status, Found, SearchInput, SortDropdown, SelectedPreview, ItemList
+    local Status, Found, ItemSelector
     local Known, Rows = {}, {}
-    local ItemConnections, ItemCards = {}, {}
-    local PreviewName, SearchQuery, SortMode = nil, "", "Rarity (high first)"
-    local PreviewIcon, PreviewNameLabel
-    local ItemInfoCache = {}
-    local VisibleItemLimit = 60
-    local SearchRevision = 0
-    local ItemTemplate
-    local function ItemInfo(Name)
-        local Cached = ItemInfoCache[Name]
-        if Cached then return Cached end
-        local Template = ItemTemplate(Name)
-        local Properties = Template and Template:FindFirstChild("ItemProperties")
-        local DisplayName = Properties and Properties:GetAttribute("ItemName") or Name
-        local Rarity, Color
-        if ItemValues then Rarity, Color = ItemValues:Rarity(Template, DisplayName) end
-        local IconObject = Properties and Properties:FindFirstChild("ItemIcon")
-        local Icon = IconObject and (IconObject:IsA("ImageLabel") or IconObject:IsA("ImageButton")) and IconObject.Image or ""
-        local Low, High
-        if ItemValues then Low, High = ItemValues:Value(Template, 1, Name) end
-        Cached = {Rarity = Rarity or "unknown", Color = Color or Library.Theme["Placeholder Text"], Icon = Icon,
-            ValueText = Low and ItemValues:Format(Low, High) or "Value unavailable"}
-        ItemInfoCache[Name] = Cached
-        return Cached
-    end
     local function SetSelection(Values)
         table.clear(S.Selected)
         local Saved = {}
         for _, Value in ipairs(type(Values) == "table" and Values or {}) do
             local Name = tostring(Value)
-            if not S.Selected[Name] then
-                S.Selected[Name] = true
-                Saved[#Saved + 1] = Name
-            end
+            if not S.Selected[Name] then S.Selected[Name] = true; Saved[#Saved + 1] = Name end
         end
         Library.Flags.AutoLootItems = Saved
         Revision += 1
-    end
-    ItemTemplate = function(Name)
-        local Items = RS:FindFirstChild("ItemsList")
-        return Items and Items:FindFirstChild(Name)
-    end
-    local function ItemRarity(Name)
-        local Info = ItemInfo(Name)
-        return Info.Rarity, Info.Color
-    end
-    local function ItemIcon(Name)
-        return ItemInfo(Name).Icon
+        if ItemSelector then ItemSelector:SetSelection(Saved) end
     end
     local function ItemValue(Name, Amount)
         if not ItemValues then return nil, nil, "unavailable" end
-        return ItemValues:Value(ItemTemplate(Name), Amount or 1, Name)
-    end
-    local function ItemValueText(Name)
-        return ItemInfo(Name).ValueText
-    end
-    local function ClearItemCards()
-        for _, Connection in ipairs(ItemConnections) do Connection:Disconnect() end
-        table.clear(ItemConnections)
-        local OwnedThemes = {}
-        for Card in pairs(ItemCards) do
-            OwnedThemes[Card] = true
-            for _, Descendant in ipairs(Card:GetDescendants()) do OwnedThemes[Descendant] = true end
-            Card:Destroy()
-        end
-        for Index = #Library.ThemeItems, 1, -1 do
-            local ThemeData = Library.ThemeItems[Index]
-            if OwnedThemes[ThemeData.Item] then
-                Library.ThemeMap[ThemeData.Item] = nil
-                table.remove(Library.ThemeItems, Index)
-            end
-        end
-        table.clear(ItemCards)
+        local Items = RS:FindFirstChild("ItemsList")
+        return ItemValues:Value(Items and Items:FindFirstChild(Name), Amount or 1, Name)
     end
     local function RenderItems()
-        if not ItemList or not ItemList.Parent then return end
-        ClearItemCards()
-        local Names = {}
-        for Name in pairs(Known) do
-            if SearchQuery == "" or Name:lower():find(SearchQuery, 1, true) then Names[#Names + 1] = Name end
-        end
-        local RarityRank = {common = 1, uncommon = 2, scarce = 3, rare = 4, boss = 5, unknown = 0}
-        table.sort(Names, function(A, B)
-            if SortMode == "Rarity (high first)" or SortMode == "Rarity (low first)" then
-                local AR, BR = RarityRank[ItemInfo(A).Rarity], RarityRank[ItemInfo(B).Rarity]
-                if AR ~= BR then
-                    if SortMode == "Rarity (high first)" then return AR > BR end
-                    return AR < BR
-                end
-            elseif SortMode == "Selected first" and S.Selected[A] ~= S.Selected[B] then
-                return S.Selected[A] == true
-            end
-            return A:lower() < B:lower()
-        end)
-        local TotalNames = #Names
-        local RenderCount = math.min(TotalNames, VisibleItemLimit)
-        for Index = 1, RenderCount do
-            local Name = Names[Index]
-            local Info = ItemInfo(Name)
-            local Rarity, RarityColor = Info.Rarity, Info.Color
-            local IsSelected = S.Selected[Name] == true
-            local Card = Instance.new("TextButton")
-            Card.Name, Card.Text, Card.AutoButtonColor = "LootItem_" .. Name, "", false
-            Card.Size, Card.LayoutOrder = UDim2.new(1, -4, 0, 38), Index
-            Card.BorderSizePixel = 0
-            Card.BackgroundColor3 = IsSelected and Library.Theme["Hovered Element"] or Library.Theme.Element
-            Card.Parent = ItemList
-            Library:AddToTheme(Card, {BackgroundColor3 = IsSelected and "Hovered Element" or "Element"})
-            local Stroke = Instance.new("UIStroke")
-            Stroke.Thickness, Stroke.Color, Stroke.Parent = IsSelected and 2 or 1,
-                IsSelected and Library.Theme.Accent or Library.Theme.Outline, Card
-            Library:AddToTheme(Stroke, {Color = IsSelected and "Accent" or "Outline"})
-            local Icon = Instance.new("ImageLabel")
-            Icon.BackgroundTransparency, Icon.Position, Icon.Size = 1, UDim2.fromOffset(4, 4), UDim2.fromOffset(30, 30)
-            Icon.ScaleType, Icon.Image, Icon.Parent = Enum.ScaleType.Fit, Info.Icon, Card
-            local Title = Instance.new("TextLabel")
-            Title.BackgroundTransparency, Title.Position = 1, UDim2.fromOffset(40, 2)
-            Title.Size, Title.FontFace, Title.TextSize = UDim2.new(1, -46, 0, 18), Library.Font, 9
-            Title.TextXAlignment, Title.TextTruncate = Enum.TextXAlignment.Left, Enum.TextTruncate.AtEnd
-            Title.Text, Title.TextColor3, Title.Parent = Name, Library.Theme.Text, Card
-            Library:AddToTheme(Title, {TextColor3 = "Text"})
-            local Tier = Instance.new("TextLabel")
-            Tier.BackgroundTransparency, Tier.Position = 1, UDim2.fromOffset(40, 19)
-            Tier.Size, Tier.FontFace, Tier.TextSize = UDim2.new(1, -46, 0, 16), Library.Font, 8
-            Tier.TextXAlignment, Tier.Text = Enum.TextXAlignment.Left,
-                (IsSelected and "Selected | " or "") .. Rarity:upper() .. " | " .. Info.ValueText
-            Tier.TextColor3, Tier.Parent = RarityColor, Card
-            table.insert(ItemConnections, Card.Activated:Connect(function()
-                if not Alive then return end
-                PreviewName = Name
-                local Next = table.clone(Library.Flags.AutoLootItems or {})
-                local At = table.find(Next, Name)
-                if At then table.remove(Next, At) else table.insert(Next, Name) end
-                SetSelection(Next)
-                SelectedPreview.Text = Name .. "\nRarity: " .. Rarity:upper() .. " | " .. ItemValueText(Name)
-                    .. (S.Selected[Name] and "\nSelected for auto loot" or "\nNot selected")
-                PreviewIcon.Image = ItemIcon(Name)
-                PreviewNameLabel.Text = Name
-                RenderItems()
-            end))
-            ItemCards[Card] = true
-        end
-        if #Names == 0 then
-            local Empty = Instance.new("TextLabel")
-            Empty.Name, Empty.Text = "NoMatches", "No items match this search"
-            Empty.BackgroundTransparency, Empty.Size = 1, UDim2.new(1, -8, 0, 34)
-            Empty.FontFace, Empty.TextSize = Library.Font, 9
-            Empty.TextXAlignment, Empty.TextColor3, Empty.Parent = Enum.TextXAlignment.Left, Library.Theme["Placeholder Text"], ItemList
-            Library:AddToTheme(Empty, {TextColor3 = "Placeholder Text"})
-            ItemCards[Empty] = true
-        end
-        if TotalNames > RenderCount then
-            local More = Instance.new("TextButton")
-            More.Name, More.Text = "LoadMoreItems", string.format("Load next %d items (%d remaining)",
-                math.min(VisibleItemLimit, TotalNames - RenderCount), TotalNames - RenderCount)
-            More.Size, More.LayoutOrder = UDim2.new(1, -4, 0, 24), RenderCount + 1
-            More.BorderSizePixel, More.AutoButtonColor = 0, false
-            More.BackgroundColor3, More.TextColor3 = Library.Theme["Page Background"], Library.Theme.Text
-            More.FontFace, More.TextSize, More.Parent = Library.Font, 9, ItemList
-            table.insert(ItemConnections, More.Activated:Connect(function()
-                VisibleItemLimit += 60
-                RenderItems()
-            end))
-            ItemCards[More] = true
-        end
-        if PreviewName and Known[PreviewName] then
-            local Rarity = ItemRarity(PreviewName)
-            SelectedPreview.Text = PreviewName .. "\nRarity: " .. Rarity:upper() .. " | " .. ItemValueText(PreviewName)
-                .. (S.Selected[PreviewName] and "\nSelected for auto loot" or "\nNot selected")
-            PreviewIcon.Image = ItemIcon(PreviewName)
-            PreviewNameLabel.Text = PreviewName
-        end
+        if ItemSelector then ItemSelector:Refresh() end
     end
     local function Data()
         local Players = RS:FindFirstChild("Players")
@@ -18240,54 +18397,15 @@ return function(Library, Page, UnloadCallbacks, ItemValues)
             S.MinimumValue = Value
             Revision += 1
         end})
-    Controls:Label("Range: 15 studs")
     Status = Controls:Label("Auto loot disabled")
     local ItemsFolder = RS:FindFirstChild("ItemsList")
     for _, Template in ipairs(ItemsFolder and ItemsFolder:GetChildren() or {}) do
         if Template:FindFirstChild("ItemProperties") then Known[Template.Name] = true end
     end
-    SearchInput = Selection:Textbox({Name = "Search items", Flag = "AutoLootSearch", Default = "",
-        Placeholder = "Type an item name...", Callback = function(Value)
-            SearchQuery = tostring(Value or ""):lower()
-            VisibleItemLimit = 60
-            if ItemList then ItemList.CanvasPosition = Vector2.zero end
-            SearchRevision += 1
-            local CurrentSearchRevision = SearchRevision
-            task.delay(0.12, function()
-                if Alive and CurrentSearchRevision == SearchRevision then RenderItems() end
-            end)
-        end})
-    SortDropdown = Selection:Dropdown({Name = "Sort by", Flag = "AutoLootSort",
-        Items = {"Rarity (high first)", "Rarity (low first)", "Name (A-Z)", "Selected first"},
-        Default = SortMode, Callback = function(Value)
-            SortMode, VisibleItemLimit = Value or SortMode, 60
-            RenderItems()
-        end})
-    SelectedPreview = Selection:Label("Click an item to preview and toggle selection")
-    local PreviewPanel = Instance.new("Frame")
-    PreviewPanel.Name, PreviewPanel.Size, PreviewPanel.BorderSizePixel = "AutoLootPreview", UDim2.new(1, 0, 0, 68), 0
-    PreviewPanel.BackgroundColor3, PreviewPanel.Parent = Library.Theme.Element, Selection.Items.Content.Instance
-    Library:AddToTheme(PreviewPanel, {BackgroundColor3 = "Element"})
-    PreviewIcon = Instance.new("ImageLabel")
-    PreviewIcon.Name, PreviewIcon.BackgroundTransparency = "ItemIcon", 1
-    PreviewIcon.Position, PreviewIcon.Size = UDim2.fromOffset(6, 6), UDim2.fromOffset(56, 56)
-    PreviewIcon.ScaleType, PreviewIcon.Parent = Enum.ScaleType.Fit, PreviewPanel
-    PreviewNameLabel = Instance.new("TextLabel")
-    PreviewNameLabel.Name, PreviewNameLabel.BackgroundTransparency = "ItemName", 1
-    PreviewNameLabel.Position, PreviewNameLabel.Size = UDim2.fromOffset(70, 6), UDim2.new(1, -76, 0, 56)
-    PreviewNameLabel.FontFace, PreviewNameLabel.TextSize = Library.Font, 9
-    PreviewNameLabel.TextWrapped, PreviewNameLabel.TextXAlignment = true, Enum.TextXAlignment.Left
-    PreviewNameLabel.TextColor3, PreviewNameLabel.Text = Library.Theme.Text, "No item selected"
-    PreviewNameLabel.Parent = PreviewPanel
-    Library:AddToTheme(PreviewNameLabel, {TextColor3 = "Text"})
-    ItemList = Instance.new("ScrollingFrame")
-    ItemList.Name, ItemList.BackgroundTransparency, ItemList.BorderSizePixel = "AutoLootItemList", 1, 0
-    ItemList.Size, ItemList.ScrollBarThickness = UDim2.new(1, 0, 0, 250), 3
-    ItemList.AutomaticCanvasSize, ItemList.CanvasSize = Enum.AutomaticSize.Y, UDim2.new()
-    ItemList.ScrollingDirection, ItemList.Parent = Enum.ScrollingDirection.Y, Selection.Items.Content.Instance
-    local ItemLayout = Instance.new("UIListLayout")
-    ItemLayout.Padding, ItemLayout.SortOrder, ItemLayout.Parent = UDim.new(0, 4), Enum.SortOrder.LayoutOrder, ItemList
-    Found = Selection:Label("Scan nearby containers to populate item choices")
+    ItemSelector = Library:ItemSelectionList("Item Filter & Auto Loot", "AutoLootItems", SetSelection)
+    Selection:Label("Select items in the sortable item table")
+    Selection:Button():Add("Open item filter", function() ItemSelector:Open() end)
+    Found = Selection:Label("No scan results")
     Selection:Button():Add("Scan nearby loot", function() Run(true) end)
     Library.SetFlags.AutoLootItems = function(Values)
         SetSelection(Values)
@@ -18300,14 +18418,14 @@ return function(Library, Page, UnloadCallbacks, ItemValues)
         local CurrentRarityRevision = ItemValues and ItemValues.Revision or 0
         if CurrentRarityRevision ~= LastRarityRevision then
             LastRarityRevision = CurrentRarityRevision
-            table.clear(ItemInfoCache)
+
             RenderItems()
         end
         if S.Enabled or S.ScanEnabled then Run() end
     end, 0.75)
     UnloadCallbacks[#UnloadCallbacks + 1] = function()
         Alive, S.Enabled = false, false; Revision += 1; Connection:Disconnect()
-        ClearItemCards()
+
         if Library.AutoLoot == S then Library.AutoLoot = nil end
     end
     Library.AutoLoot = S
@@ -18480,8 +18598,6 @@ return function(Library, Page, UnloadCallbacks, Prices)
     end})
     PreviewSection:Button():Add("Refresh preview", Preview)
     local OrderSection = Page:Section({Name = "Gear type order", Side = 1})
-    OrderSection:Label("Choose Gear type, then drag rows to reorder")
-    OrderSection:Label("Within each group: highest value first")
     OrderHolder = Instance.new("Frame")
     OrderHolder.Name, OrderHolder.BackgroundTransparency = "StashGearOrder", 1
     OrderHolder.Size, OrderHolder.Parent = UDim2.new(1, 0, 0, #DefaultGearOrder * 52 - 4), OrderSection.Items.Content.Instance
@@ -19323,7 +19439,6 @@ return function(Library, Page, UnloadCallbacks)
     local Actions = Section:Button()
     Actions:Add("Apply avatar", function() S:Apply(false) end)
     Actions:Add("Restore avatar", function() S:Restore() end)
-    Section:Label("Local appearance. Keeps your game character rig.")
     Status = Section:Label("Enter a Roblox user ID to copy their avatar")
     local DescendantConnection
     local function Watch(Character)
@@ -19373,6 +19488,334 @@ end
         CreateCustomAvatar(Library, PlayerMiscPage, UnloadCallbacks)
                                                                                          
         do
+        local CreateSoundESP = (function()
+        return function(Library, UnloadCallbacks)
+            local Players = game:GetService("Players")
+            local Run = game:GetService("RunService")
+            local LocalPlayer = Players.LocalPlayer
+            local E = {Active = true, Entries = {}, Owners = {}, Sounds = {}, Connections = {}, Latest = {}, LastCue = {},
+                Settings = {Enabled = false, Modes = {"Circles"}, Footsteps = true, Jumping = true,
+                    Color = Library.Theme.Accent, Duration = 1.2, Radius = 5}}
+            Library.SoundESP = E
+            local RingSegments, RingPoints = 64, {}
+            for Index = 0, RingSegments do
+                local Angle = Index / RingSegments * math.pi * 2
+                RingPoints[Index + 1] = Vector3.new(math.cos(Angle), 0, math.sin(Angle))
+            end
+            local function New(Class, Parent, Properties)
+                local Object = Instance.new(Class)
+                for Key, Value in pairs(Properties or {}) do Object[Key] = Value end
+                Object.Parent = Parent
+                return Object
+            end
+            function E:HasMode(Name) return table.find(self.Settings.Modes, Name) ~= nil end
+            function E:Classify(Sound)
+                if not Sound:IsA("Sound") then return end
+                local Object = Sound
+                for _ = 1, 3 do
+                    if not Object then break end
+                    local Name = Object.Name:lower()
+                    if Name:find("jump", 1, true) then return "Jumping" end
+                    if Name == "running" or Name == "walking" or Name == "sprinting" or Name == "rattle"
+                        or Name:find("footstep", 1, true) or Name == "step" then return "Footsteps" end
+                    Object = Object.Parent
+                end
+            end
+            function E:Remove(Index)
+                local Entry = table.remove(self.Entries, Index)
+                for _, Line in ipairs(Entry.Lines) do Line:Destroy() end
+                if Entry.Arrow then Entry.Arrow:Destroy() end
+                if Entry.Cham then Entry.Cham:Destroy() end
+                if Entry.Ghost then Entry.Ghost:Destroy() end
+                if self.Latest[Entry.Owner] == Entry then self.Latest[Entry.Owner] = nil end
+            end
+            function E:ClearOwner(Owner)
+                for Index = #self.Entries, 1, -1 do
+                    if self.Entries[Index].Owner == Owner then self:Remove(Index) end
+                end
+                self.LastCue[Owner] = nil
+            end
+            function E:Clear()
+                for Index = #self.Entries, 1, -1 do self:Remove(Index) end
+                table.clear(self.LastCue)
+            end
+            function E:SetModes(Values)
+                local Modes = {}
+                for _, Name in ipairs(type(Values) == "table" and Values or {}) do
+                    if (Name == "Circles" or Name == "Large circle" or Name == "360 arrows" or Name == "Sound chams") and not table.find(Modes, Name) then
+                        Modes[#Modes + 1] = Name
+                    end
+                end
+                self.Settings.Modes = Modes
+                self:Clear()
+            end
+            function E:GetHearingDistance(Sound)
+                return Sound and math.max(0, tonumber(Sound.RollOffMaxDistance) or 0) or 0
+            end
+            function E:CaptureSoundPose(Entry, Now)
+                if Entry.ChamCreated and Now - Entry.ChamCreated < math.max(0.6, Entry.Duration) then return end
+                if not Entry.Ghost then
+                    Entry.Ghost = New("Model", self.Ghosts, {Name = "SoundPose"})
+                    Entry.GhostParts = {}
+                    for _, Part in ipairs(Entry.Character:GetDescendants()) do
+                        if Part:IsA("BasePart") and Part.Name ~= "HumanoidRootPart" and Part.Transparency < 1
+                            and not Part:FindFirstAncestorOfClass("Tool") then
+                            local WasArchivable = Part.Archivable
+                            local Cloned, Copy = pcall(function()
+                                Part.Archivable = true
+                                local Result = Part:Clone()
+                                Part.Archivable = WasArchivable
+                                return Result
+                            end)
+                            Part.Archivable = WasArchivable
+                            if not Cloned then Copy = nil end
+                            if Copy then
+                                -- Keep geometry only; never copy character scripts, joints or sounds into the world.
+                                for _, Child in ipairs(Copy:GetDescendants()) do
+                                    if not Child:IsA("DataModelMesh") then Child:Destroy() end
+                                end
+                                Copy.Anchored, Copy.CanCollide, Copy.CanTouch, Copy.CanQuery = true, false, false, false
+                                Copy.CastShadow, Copy.Transparency, Copy.LocalTransparencyModifier = false, 0.4, 0
+                                Copy.CFrame, Copy.Parent = Part.CFrame, Entry.Ghost
+                                Entry.GhostParts[#Entry.GhostParts + 1] = {Source = Part, Copy = Copy}
+                                if #Entry.GhostParts >= 80 then break end
+                            end
+                        end
+                    end
+                end
+                for _, Part in ipairs(Entry.GhostParts) do
+                    if Part.Source:IsDescendantOf(Entry.Character) then
+                        Part.Copy.CFrame = Part.Source.CFrame
+                    end
+                end
+                Entry.ChamCreated = Now
+            end
+            function E:Emit(Owner, Kind, Sound)
+                local S, Camera = self.Settings, workspace.CurrentCamera
+                if not self.Active or not S.Enabled or #S.Modes == 0 or Owner == LocalPlayer
+                    or not S[Kind] or not Camera or not self.Gui then return false end
+                local Character = Owner.Character
+                local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+                local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+                if not Root or not Humanoid or Humanoid.Health <= 0 then return false end
+                local HearingDistance = self:GetHearingDistance(Sound)
+                local Source = Sound and Sound.Parent
+                local SoundPosition = Source and Source:IsA("Attachment") and Source.WorldPosition
+                    or Source and Source:IsA("BasePart") and Source.Position or Root.Position
+                if HearingDistance <= 0 or (SoundPosition - Camera.CFrame.Position).Magnitude > HearingDistance then return false end
+                local Now = os.clock()
+                local Previous = self.LastCue[Owner] or {}
+                if Previous[Kind] and Now - Previous[Kind] < 0.4 then return false end
+                Previous[Kind], self.LastCue[Owner] = Now, Previous
+                -- Refresh the player's existing effect instead of allocating one for each step.
+                local Existing = self.Latest[Owner]
+                if Existing and Existing.Character == Character then
+                    Existing.LastHeard, Existing.Duration, Existing.Kind = Now, S.Duration, Kind
+                    Existing.Sound, Existing.SoundPosition, Existing.HearingDistance = Sound, SoundPosition, HearingDistance
+                    if Existing.Cham then self:CaptureSoundPose(Existing, Now) end
+                    return true
+                end
+                local Params = RaycastParams.new()
+                Params.FilterType = Enum.RaycastFilterType.Exclude
+                local Excluded = {Character, self.Gui}
+                if LocalPlayer.Character then Excluded[#Excluded + 1] = LocalPlayer.Character end
+                Params.FilterDescendantsInstances = Excluded
+                local Hit = workspace:Raycast(Root.Position, Vector3.new(0, -12, 0), Params)
+                local Position = Hit and Hit.Position + Vector3.new(0, 0.06, 0)
+                    or Root.Position - Vector3.new(0, Humanoid.HipHeight + Root.Size.Y / 2, 0)
+                if #self.Entries >= 32 then self:Remove(1) end
+                local Entry = {Owner = Owner, Character = Character, Position = Position, Created = Now,
+                    Duration = S.Duration, Kind = Kind, Lines = {}, Sound = Sound,
+                    LastHeard = Now, GroundOffset = Position - Root.Position,
+                    SoundPosition = SoundPosition, HearingDistance = HearingDistance}
+                if self:HasMode("Circles") or self:HasMode("Large circle") then
+                    for Index = 1, RingSegments do
+                        Entry.Lines[Index] = New("Frame", self.Gui, {Name = "SoundRing", AnchorPoint = Vector2.new(0.5, 0.5),
+                            BorderSizePixel = 0, BackgroundColor3 = S.Color, Visible = false, ZIndex = 2})
+                    end
+                end
+                if self:HasMode("360 arrows") then
+                    Entry.Arrow = New("TextLabel", self.Gui, {Name = "SoundDirection", BackgroundTransparency = 1,
+                        AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(28, 28),
+                        Font = Enum.Font.SourceSansBold, Text = "▲", TextSize = 28, TextColor3 = S.Color,
+                        TextStrokeColor3 = Color3.new(), TextStrokeTransparency = 0.4, Visible = false, ZIndex = 3})
+                end
+                if self:HasMode("Sound chams") then
+                    self:CaptureSoundPose(Entry, Now)
+                    Entry.Cham = New("Highlight", self.Gui, {Name = "SoundCham", Adornee = Entry.Ghost,
+                        DepthMode = Enum.HighlightDepthMode.AlwaysOnTop, FillColor = S.Color, OutlineColor = S.Color,
+                        FillTransparency = 0.25, OutlineTransparency = 0})
+                end
+                self.Entries[#self.Entries + 1], self.Latest[Owner] = Entry, Entry
+                return true
+            end
+            function E:RemoveSound(Sound)
+                local Track = self.Sounds[Sound]
+                if not Track then return end
+                for _, Connection in ipairs(Track.Connections) do Connection:Disconnect() end
+                self.Sounds[Sound] = nil
+            end
+            function E:ObserveSound(Owner, Sound)
+                if self.Sounds[Sound] then return end
+                -- Sounds can be parented before their name, asset and playback properties arrive.
+                local Track = {Owner = Owner, Kind = self:Classify(Sound), Connections = {}}
+                self.Sounds[Sound] = Track
+                function Track.TryEmit()
+                    local Now = os.clock()
+                    if Track.NextAttempt and Now < Track.NextAttempt then return end
+                    Track.NextAttempt = Now + 0.2
+                    Track.Kind = self:Classify(Sound)
+                    local Group = Sound.SoundGroup
+                    if Track.Kind and Sound.Volume > 0 and Sound.SoundId ~= "" and (not Group or Group.Volume > 0)
+                        and self:Emit(Owner, Track.Kind, Sound) then Track.PendingUntil = nil end
+                end
+                local function Played()
+                    Track.NextAttempt = nil
+                    Track.PendingUntil = os.clock() + 0.35
+                    Track.TryEmit()
+                end
+                Track.Played = Played
+                Track.Connections[#Track.Connections + 1] = Sound.Played:Connect(Played)
+                Track.Connections[#Track.Connections + 1] = Sound.DidLoop:Connect(Played)
+                Track.Connections[#Track.Connections + 1] = Sound.Destroying:Connect(function() self:RemoveSound(Sound) end)
+                if Sound.IsPlaying then Played() end
+            end
+            function E:DetachCharacter(Owner)
+                local State = self.Owners[Owner]
+                if not State then return end
+                for _, Connection in ipairs(State.CharacterConnections) do Connection:Disconnect() end
+                table.clear(State.CharacterConnections)
+                for Sound, Track in pairs(self.Sounds) do if Track.Owner == Owner then self:RemoveSound(Sound) end end
+                self:ClearOwner(Owner)
+            end
+            function E:WatchOwner(Owner)
+                if Owner == LocalPlayer or self.Owners[Owner] then return end
+                local State = {Connections = {}, CharacterConnections = {}}
+                self.Owners[Owner] = State
+                local function CharacterAdded(Character)
+                    self:DetachCharacter(Owner)
+                    State.CharacterConnections[#State.CharacterConnections + 1] = Character.DescendantAdded:Connect(function(Object)
+                        if Object:IsA("Sound") then self:ObserveSound(Owner, Object) end
+                    end)
+                    State.CharacterConnections[#State.CharacterConnections + 1] = Character.DescendantRemoving:Connect(function(Object)
+                        if self.Sounds[Object] then self:RemoveSound(Object) end
+                    end)
+                    for _, Object in ipairs(Character:GetDescendants()) do
+                        if Object:IsA("Sound") then self:ObserveSound(Owner, Object) end
+                    end
+                end
+                State.Connections[#State.Connections + 1] = Owner.CharacterAdded:Connect(CharacterAdded)
+                State.Connections[#State.Connections + 1] = Owner.CharacterRemoving:Connect(function() self:DetachCharacter(Owner) end)
+                if Owner.Character then CharacterAdded(Owner.Character) end
+            end
+            function E:ForgetOwner(Owner)
+                local State = self.Owners[Owner]
+                if not State then return end
+                self:DetachCharacter(Owner)
+                for _, Connection in ipairs(State.Connections) do Connection:Disconnect() end
+                self.Owners[Owner] = nil
+            end
+            function E:Update()
+                local Camera, S = workspace.CurrentCamera, self.Settings
+                if not Camera then
+                    for _, Entry in ipairs(self.Entries) do
+                        for _, Line in ipairs(Entry.Lines) do Line.Visible = false end
+                        if Entry.Arrow then Entry.Arrow.Visible = false end
+                    end
+                    return
+                end
+                -- Poll playback too: replicated Playing changes may arrive without a local Played event.
+                for Sound, Track in pairs(self.Sounds) do
+                    local Playing = Sound.IsPlaying
+                    Track.Kind = self:Classify(Sound)
+                    if Playing and not Track.WasPlaying then Track.Played() end
+                    Track.WasPlaying = Playing
+                    if Track.PendingUntil then
+                        if os.clock() <= Track.PendingUntil then Track.TryEmit()
+                        else Track.PendingUntil = nil end
+                    end
+                    if Playing and Track.Kind == "Footsteps" then
+                        local Character = Track.Owner.Character
+                        local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+                        if Root and Vector3.new(Root.AssemblyLinearVelocity.X, 0, Root.AssemblyLinearVelocity.Z).Magnitude > 1 then Track.TryEmit() end
+                    end
+                end
+                local Now, Viewport = os.clock(), Camera.ViewportSize
+                for Index = #self.Entries, 1, -1 do
+                    local Entry = self.Entries[Index]
+                    local Progress = (Now - Entry.LastHeard) / Entry.Duration
+                    local Root = Entry.Character:FindFirstChild("HumanoidRootPart")
+                    if Root then
+                        Entry.Position = Root.Position + Entry.GroundOffset
+                        local Source = Entry.Sound.Parent
+                        Entry.SoundPosition = Source and Source:IsA("Attachment") and Source.WorldPosition
+                            or Source and Source:IsA("BasePart") and Source.Position or Root.Position
+                    end
+                    if Entry.Sound.Parent then Entry.HearingDistance = self:GetHearingDistance(Entry.Sound) end
+                    if Progress >= 1 or not Root or Entry.Owner.Character ~= Entry.Character or not Entry.Character.Parent
+                        or Entry.HearingDistance <= 0
+                        or (Entry.SoundPosition - Camera.CFrame.Position).Magnitude > Entry.HearingDistance then self:Remove(Index); continue end
+                    local Fade = 1 - Progress
+                    local Growth = math.clamp((Now - Entry.Created) / Entry.Duration, 0, 1)
+                    local Radius = self:HasMode("Large circle") and S.Radius
+                        or 0.3 + S.Radius * (1 - (1 - Growth) ^ 2)
+                    local First = #Entry.Lines > 0 and Camera:WorldToViewportPoint(Entry.Position + RingPoints[1] * Radius)
+                    for Segment, Line in ipairs(Entry.Lines) do
+                        local Last = Camera:WorldToViewportPoint(Entry.Position + RingPoints[Segment + 1] * Radius)
+                        Line.Visible = First.Z > 0.05 and Last.Z > 0.05
+                        if Line.Visible then
+                            local Delta = Vector2.new(Last.X - First.X, Last.Y - First.Y)
+                            Line.Position = UDim2.fromOffset((First.X + Last.X) / 2, (First.Y + Last.Y) / 2)
+                            Line.Size = UDim2.fromOffset(Delta.Magnitude + 1, 2)
+                            Line.Rotation, Line.BackgroundTransparency = math.deg(math.atan2(Delta.Y, Delta.X)), 1 - Fade * 0.9
+                            Line.BackgroundColor3 = S.Color
+                        end
+                        First = Last
+                    end
+                    if Entry.Arrow then
+                        local Relative = Camera.CFrame:VectorToObjectSpace(Entry.Position - Camera.CFrame.Position)
+                        local Direction = Vector2.new(Relative.X, Relative.Z)
+                        Direction = Direction.Magnitude > 0.001 and Direction.Unit or Vector2.new(0, -1)
+                        local Point = Viewport / 2 + Vector2.new(Direction.X * Viewport.X * 0.3, Direction.Y * Viewport.Y * 0.3)
+                        Entry.Arrow.Position = UDim2.fromOffset(Point.X, Point.Y)
+                        Entry.Arrow.Rotation = math.deg(math.atan2(Direction.Y, Direction.X)) + 90
+                        Entry.Arrow.TextColor3, Entry.Arrow.TextTransparency, Entry.Arrow.Visible = S.Color, 1 - Fade, true
+                        Entry.Arrow.TextStrokeTransparency = 1 - Fade * 0.6
+                    end
+                    if Entry.Cham then
+                        local ChamFade = 1 - math.clamp((Now - Entry.ChamCreated) / Entry.Duration, 0, 1)
+                        Entry.Cham.FillColor, Entry.Cham.OutlineColor = S.Color, S.Color
+                        Entry.Cham.FillTransparency, Entry.Cham.OutlineTransparency = 1 - ChamFade * 0.75, 1 - ChamFade
+                    end
+                end
+            end
+            function E:SetEnabled(Value)
+                self.Settings.Enabled = Value == true and self.Active
+                for _, Connection in ipairs(self.Connections) do Connection:Disconnect() end
+                table.clear(self.Connections)
+                for Owner in pairs(self.Owners) do self:ForgetOwner(Owner) end
+                self:Clear()
+                if self.Gui then self.Gui:Destroy(); self.Gui = nil end
+                if self.Ghosts then self.Ghosts:Destroy(); self.Ghosts = nil end
+                if not self.Settings.Enabled then return end
+                self.Ghosts = New("Folder", workspace, {Name = "CinnamonSoundPoses"})
+                self.Gui = New("ScreenGui", Library.Holder.Instance.Parent, {Name = "CinnamonSoundESP",
+                    IgnoreGuiInset = true, ResetOnSpawn = false, DisplayOrder = Library.Holder.Instance.DisplayOrder - 2})
+                self.Connections[#self.Connections + 1] = Players.PlayerAdded:Connect(function(Owner) self:WatchOwner(Owner) end)
+                self.Connections[#self.Connections + 1] = Players.PlayerRemoving:Connect(function(Owner) self:ForgetOwner(Owner) end)
+                self.Connections[#self.Connections + 1] = ConnectScheduled(Run.RenderStepped, function() self:Update() end, 1 / 30)
+                for _, Owner in ipairs(Players:GetPlayers()) do self:WatchOwner(Owner) end
+            end
+            function E:Destroy()
+                self:SetEnabled(false)
+                self.Active = false
+                if Library.SoundESP == self then Library.SoundESP = nil end
+            end
+            table.insert(UnloadCallbacks, function() E:Destroy() end)
+            return E
+        end
+        end)()
+        local SoundESP = CreateSoundESP(Library, UnloadCallbacks)
         local function BuildESPPreview()
             local Player = game:GetService("Players").LocalPlayer
             local Run = game:GetService("RunService")
@@ -19403,6 +19846,10 @@ end
                 Position = UDim2.new(0, 4, 0.5, 0), Size = UDim2.fromOffset(12, 12),
                 BackgroundColor3 = CheckboxColor(), BorderColor3 = Library.Theme.Border, BorderSizePixel = 2, ZIndex = 21})
             Library:AddToTheme(ToggleBox, {BackgroundColor3 = CheckboxColor, BorderColor3 = "Border"})
+            local ToggleMark = New("TextLabel", ToggleBox, {Name = "Checkmark", Size = UDim2.fromScale(1, 1),
+                BackgroundTransparency = 1, Font = Enum.Font.GothamBold, Text = "✓", TextSize = 9,
+                TextColor3 = Color3.new(1, 1, 1), TextStrokeTransparency = 1,
+                Visible = Preview.Enabled, ZIndex = 23})
             local ToggleOutline = New("UIStroke", ToggleBox, {ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
                 LineJoinMode = Enum.LineJoinMode.Miter, Color = Library.Theme.Outline, Thickness = 1})
             Library:AddToTheme(ToggleOutline, {Color = "Outline"})
@@ -19420,6 +19867,7 @@ end
                 Library.ESPPreviewEnabled = Preview.Enabled
                 Library.Flags.UIESPPreview = Preview.Enabled
                 ToggleBox.BackgroundColor3 = CheckboxColor()
+                ToggleMark.Visible = Preview.Enabled
                 Dirty = true
             end
             Connections[#Connections + 1] = PreviewToggle.Activated:Connect(function() SetPreviewEnabled(not Preview.Enabled) end)
@@ -22331,7 +22779,6 @@ end
                     if Skins.OnSelectionsChanged then Skins.OnSelectionsChanged() end
                     if Value and not Skins.Enabled then Library:Notification("Skin changer", Skins.Error or "Could not enable skins", 5) end
                 end})
-            Browser:Label("Pick an item, then a skin. Selections save with your config.")
             Summary = Label(Browser.Items.Content.Instance, "", 24)
             Browser:Textbox({Name = "Find an item", Flag = "CustomSkinSearch", Default = "",
                 Placeholder = "Item name...",
@@ -22390,13 +22837,11 @@ end
             PulloutActions:Add("Default animation", function()
                 if Selected then Skins:SetPullout(Selected, "Default") end
             end)
-            local PulloutInfo = Details:Label("Uses the source model's equip animation only; your selected skin/model stays unchanged. Saved per knife.")
             local function UpdatePulloutVisibility()
                 local Visible = Selected ~= nil and Skins:CanUsePullout(Selected)
                 PulloutEnabled:SetVisibility(Visible)
                 PulloutInput:SetVisibility(Visible)
                 PulloutActions:SetVisibility(Visible)
-                PulloutInfo:SetVisibility(Visible)
                 if not Visible and Skins.PulloutEnabled then PulloutEnabled:Set(false) end
             end
             local DetailActions = Details:Button()
@@ -22851,7 +23296,6 @@ return function(Library, Page, UnloadCallbacks)
         Controller:Refresh()
     end
     local Section = Page:Section({Name = "Player material changer", Side = 1})
-    Section:Label("Enemy players only")
     Section:Toggle({Name = "Enabled", Flag = "PlayerMaterialEnabled", Default = false, Callback = function(V) Set("Enabled", V) end})
     Section:Dropdown({Name = "Material", Flag = "PlayerMaterial", Items = {"Neon", "ForceField", "Glass", "SmoothPlastic", "Plastic", "Metal", "DiamondPlate", "Foil", "Ice", "Wood", "Marble", "Granite"}, Default = Settings.Material, Callback = function(V) Set("Material", V) end})
     local Textures = Section:Toggle({Name = "Remove textures", Flag = "PlayerMaterialRemoveTextures", Default = Settings.RemoveTextures, Callback = function(V) Set("RemoveTextures", V) end})
@@ -22860,7 +23304,6 @@ return function(Library, Page, UnloadCallbacks)
     Section:Slider({Name = "Reflectance", Flag = "PlayerMaterialReflectance", Min = 0, Max = 1, Default = 0, Decimals = 0.01, Callback = function(V) Set("Reflectance", V) end})
     Section:Slider({Name = "Distance", Flag = "PlayerMaterialDistance", Min = 50, Max = 3000, Default = Settings.Distance, Decimals = 1, Suffix = " studs", Callback = function(V) Set("Distance", V) end})
     local EffectSection = Page:Section({Name = "Enemy effects & halo", Side = 2})
-    EffectSection:Label("Pair with Neon material and remove textures")
     local EnabledEffect = EffectSection:Toggle({Name = "Enabled", Flag = "EnemyEffectsEnabled", Default = false,
         Callback = function(V) SetEffect("Enabled", V) end})
     EnabledEffect:Colorpicker({Name = "Glow color", Flag = "EnemyEffectsColor", Default = EffectSettings.Color,
@@ -24306,7 +24749,6 @@ end
                 Callback = function(Value) WorldRemovals:SetVegetationStyle(VegetationKind, "Transparency", Value / 100) end,
             })
         end
-        FoliageColors:Label("Grass transparency applies to meshes; terrain grass supports color.")
         RemovalsSection:Toggle({
             Name = "Remove fog", Flag = "WorldRemoveFog", Default = false,
             Callback = function(Value) WorldRemovals:SetFog(Value) end,
@@ -24601,39 +25043,42 @@ end
             if not Watermark:GetVisibility() then return end
             local Selected = {}
             for _, Field in ipairs(SelectedFields or {}) do Selected[Field] = true end
-            local Parts = {"Cinnamon.pub | Beta"}
+            local Parts, Icons = {"Cinnamon.pub", "Beta"}, {"flame", "tag"}
+            local function AddPart(Icon, Value)
+                Parts[#Parts + 1], Icons[#Icons + 1] = Value, Icon
+            end
             local Player = game:GetService("Players").LocalPlayer
-            if Selected.FPS then table.insert(Parts, tostring(FPS or 0) .. " fps") end
-            if Selected.Username then table.insert(Parts, Player.Name) end
-            if Selected["Player count"] then table.insert(Parts, "Players: " .. tostring(#game:GetService("Players"):GetPlayers())) end
+            if Selected.FPS then AddPart("activity", tostring(FPS or 0) .. " fps") end
+            if Selected.Username then AddPart("user", Player.Name) end
+            if Selected["Player count"] then AddPart("users", "Players: " .. tostring(#game:GetService("Players"):GetPlayers())) end
             if Selected.HSR then
                 local _, HSR = CombatController:GetCombatRatios()
                 local Percent = HSR ~= nil and string.format("%.1f%%", math.floor(HSR * 1000) / 10) or "N/A"
-                table.insert(Parts, "HSR: " .. Percent)
+                AddPart("crosshair", "HSR: " .. Percent)
             end
             if Selected["Ping (ms)"] then
                 local Success, Ping = pcall(function() return Player:GetNetworkPing() end)
                 if Success and type(Ping) == "number" then
-                    table.insert(Parts, tostring(math.floor(Ping * 1000 + 0.5)) .. " ms")
+                    AddPart("wifi", tostring(math.floor(Ping * 1000 + 0.5)) .. " ms")
                 end
             end
             if Selected.Reports then
                 local Reports = GetReportCount(GetPlayerStatus(Player.Name))
-                table.insert(Parts, "Reports: " .. (Reports and tostring(Reports) or "N/A"))
+                AddPart("flag", "Reports: " .. (Reports and tostring(Reports) or "N/A"))
             end
             if Selected["Inventory value"] then
-                table.insert(Parts, "Inv value: " .. InventoryValues:Format(InventoryValues:ForPlayer(Player)))
+                AddPart("box", "Inv value: " .. InventoryValues:Format(InventoryValues:ForPlayer(Player)))
             end
             if Selected["Server value"] then
-                table.insert(Parts, "Server value: " .. InventoryValues:Format(InventoryValues:Server()))
+                AddPart("coins", "Server value: " .. InventoryValues:Format(InventoryValues:Server()))
             end
             if Selected.Session then
                 local Seconds = math.floor(os.clock() - WatermarkSessionStart)
-                table.insert(Parts, string.format("%02d:%02d:%02d", math.floor(Seconds / 3600), math.floor(Seconds / 60) % 60, Seconds % 60))
+                AddPart("timer", string.format("%02d:%02d:%02d", math.floor(Seconds / 3600), math.floor(Seconds / 60) % 60, Seconds % 60))
             end
-            if Selected.Time then table.insert(Parts, os.date("%H:%M:%S")) end
-            if Selected.Date then table.insert(Parts, os.date("%b %d")) end
-            Watermark:SetText(table.concat(Parts, " | "))
+            if Selected.Time then AddPart("clock", os.date("%H:%M:%S")) end
+            if Selected.Date then AddPart("calendar", os.date("%b %d")) end
+            Watermark:SetText(table.concat(Parts, " | "), Icons)
         end
         local WatermarkStats = WatermarkSection:Dropdown({
             Name = "Display", Flag = "UIWatermarkStats", Items = WatermarkFields,
@@ -25227,14 +25672,29 @@ end
                 end
                 return Control
             end
-            local function Slider(Section, Name, Flag, Settings, Key, Min, Max, Step, Suffix)
+            local function Slider(Section, Name, Flag, Settings, Key, Min, Max, Step, Suffix, Tooltip)
                 Section:Slider({
                     Name = Name, Flag = "ESP" .. Flag, Default = Settings[Key],
                     Min = Min, Max = Max, Decimals = Step, Suffix = Suffix or "",
+                    ToolTip = Tooltip,
                     Callback = function(Value) Settings[Key] = Value end,
                 })
             end
             local General = PlayersESPPage:Section({Name = "ESP", Side = 1})
+            local SoundSection = PlayersESPPage:Section({Name = "Sound ESP", Side = 2})
+            local SoundSettings = Library.SoundESP.Settings
+            SoundSection:Toggle({Name = "Enabled", Flag = "ESPSoundEnabled", Default = false,
+                ToolTip = {Name = "Sound ESP", Description = "Detects enabled footstep and jump sounds within each sound's configured hearing distance."},
+                Callback = function(Value) Library.SoundESP:SetEnabled(Value) end})
+            Toggle(SoundSection, "Footstep sounds", "SoundFootsteps", SoundSettings, "Footsteps")
+            Toggle(SoundSection, "Jump sounds", "SoundJumping", SoundSettings, "Jumping")
+            SoundSection:Label("Sound color"):Colorpicker({Flag = "ESPSoundColor", Default = SoundSettings.Color,
+                Callback = function(Value) SoundSettings.Color = Value end})
+            Slider(SoundSection, "Fade duration", "SoundDuration", SoundSettings, "Duration", 0.3, 3, 0.1, "s")
+            Slider(SoundSection, "Circle radius", "SoundRadius", SoundSettings, "Radius", 1, 12, 0.5, " studs")
+            SoundSection:Dropdown({Name = "Modes", Flag = "ESPSoundModes", Multi = true,
+                Items = {"Circles", "Large circle", "360 arrows", "Sound chams"}, Default = SoundSettings.Modes,
+                Callback = function(Value) Library.SoundESP:SetModes(Value) end})
             Toggle(General, "Enabled", "Enabled", ESP, "Enabled")
             Toggle(General, "Squad health HUD", "SquadHealthHUD", Library.SquadHealth, "Enabled")
             General:Toggle({
@@ -25531,9 +25991,6 @@ end
                     CombatController:InvalidateShotSolutions()
                     CombatController:SelectTarget(true)
                 end})
-            SilentSection:Label("Torso at 70% · Head at 60%")
-            SilentSection:Label("Ratio: head hits / all hits")
-            SilentSection:Label("HSR overrides forced head hits until 60%")
             local RageSection = AimbotPage:Section({Name = "Rage bot", Side = 1})
             RageSection:Toggle({Name = "Auto shoot", Flag = "RageEnabled", Default = false,
                 Callback = function(Value) Rage.Enabled = Value end}):Keybind({
@@ -25594,8 +26051,6 @@ end
                 Callback = function(Value) Mi24VController.Prioritize = Value; CombatController:SelectTarget(true) end})
             HelicopterAim:Toggle({Name = "Lead moving helicopter", Flag = "Mi24VAimPrediction", Default = true,
                 Callback = function(Value) Mi24VController.Prediction = Value end})
-            HelicopterAim:Label("Auto: visible pilot, then low-armor hitboxes.")
-            HelicopterAim:Label("Uses silent aim key, FOV and distance limits.")
             TargetSection:Dropdown({
                 Name = "Target bone", Flag = "SilentAimBone", Default = "Head", Multi = false,
                 Items = {"Head", "UpperTorso", "HumanoidRootPart", "LeftUpperArm", "RightUpperArm", "LeftUpperLeg", "RightUpperLeg"},
@@ -25689,6 +26144,8 @@ end
         if getgenv().CinnamonLoaderTransition == LoaderTransition then
             getgenv().CinnamonLoaderTransition = nil
         end
+    else
+        Window:SetOpen(true)
     end
     Library:Notification("Loaded!", "Menu took "..string.format("%.4f", os.clock() - LoadTick).." seconds to load", 5)
 
