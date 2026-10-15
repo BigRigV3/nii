@@ -13911,9 +13911,16 @@ end
         end
         UndergroundTrack, UndergroundAnimator, UndergroundHumanoid, UndergroundAnimationId, UndergroundSeekTime = nil, nil, nil, nil, nil
     end
+    local function NormalizeAnimationId(Value)
+        local Text = tostring(Value or ""):match("^%s*(.-)%s*$")
+        local Id = Text:match("^(%d+)$") or Text:match("^rbxassetid://(%d+)$")
+            or Text:match("^https?://www%.roblox%.com/asset/%?id=(%d+)$")
+        if not Id or not tonumber(Id) or tonumber(Id) <= 0 then return nil end
+        return Id
+    end
     function E:UpdateUndergroundAnimation(Humanoid)
         local Settings = E.Underground
-        local Id = tostring(Settings.AnimationId or ""):match("%d+")
+        local Id = NormalizeAnimationId(Settings.AnimationId)
         if not Settings.Enabled or not Settings.Pose or not E.Focused or not Humanoid or not Id then
             StopUndergroundAnimation()
             return
@@ -13931,12 +13938,20 @@ end
             Animation.AnimationId = "rbxassetid://" .. Id
             local Ok, Track = pcall(function() return Animator:LoadAnimation(Animation) end)
             Animation:Destroy()
-            if not Ok or not Track then return end
+            if not Ok or not Track then
+                warn("[Cinnamon] Underground animation could not load: " .. tostring(Track))
+                return
+            end
             UndergroundTrack, UndergroundAnimator = Track, Animator
             UndergroundHumanoid, UndergroundAnimationId = Humanoid, Id
             Track.Looped = true
             Track.Priority = Enum.AnimationPriority.Action4
-            pcall(function() Track:Play(0.1, 1, Settings.Freeze and 0 or 1) end)
+            local Played, Error = pcall(function() Track:Play(0.1, 1, Settings.Freeze and 0 or 1) end)
+            if not Played then
+                warn("[Cinnamon] Underground animation could not play: " .. tostring(Error))
+                StopUndergroundAnimation()
+                return
+            end
         end
         pcall(function()
             local Time = math.max(0, tonumber(Settings.FreezeTime) or 0)
@@ -19486,6 +19501,359 @@ return function(Library, Page, UnloadCallbacks)
 end
         end)()
         CreateCustomAvatar(Library, PlayerMiscPage, UnloadCallbacks)
+
+        do
+        local BuildDanceWheel = (function()
+return function(Library, Page, Effects, UnloadCallbacks)
+    local Input = game:GetService("UserInputService")
+    local Run = game:GetService("RunService")
+    local Actions = game:GetService("ContextActionService")
+    local Http = game:GetService("HttpService")
+    local Player = game:GetService("Players").LocalPlayer
+    local S = {Enabled = false, Open = false, Slots = {}, Speed = 1, Loop = true, CancelOnMove = true}
+    local Alive, Revision, FontRevision = true, 0, 0
+    local Track, DancingHumanoid, Started, HeldInput, SavedMouse, Selected
+    local DanceSound, TakeLSoundAsset
+    local ResolvedAnimations = {}
+    local function ResolveEmoteAnimation(Id)
+        if ResolvedAnimations[Id] then return ResolvedAnimations[Id] end
+        local Resolved = Id
+        local OK, Assets = pcall(function() return game:GetObjects("rbxassetid://" .. Id) end)
+        if OK then
+            for _, Asset in ipairs(Assets) do
+                local Animation = Asset:IsA("Animation") and Asset or Asset:FindFirstChildWhichIsA("Animation", true)
+                if Animation then Resolved = Animation.AnimationId:match("%d+") or Resolved end
+                Asset:Destroy()
+            end
+        end
+        ResolvedAnimations[Id] = Resolved
+        return Resolved
+    end
+    local TakeLId = "124573621747512"
+    local EmoteDefaults = {
+        {Name = "Bill Bounce", Id = "82441853772985"},
+        {Name = "Take the L", Id = TakeLId},
+        {Name = "Floss", Id = "5917570207"},
+    }
+    local WheelBind, Status
+    local Binding = "CinnamonDanceWheel_" .. Http:GenerateGUID(false)
+    local Background = Color3.fromRGB(27, 32, 48)
+    local Blue = Color3.fromRGB(37, 139, 245)
+    local WheelFont = Font.fromEnum(Enum.Font.Bangers)
+    local FontLabels, Sectors = {}, {}
+    local function New(Class, Properties)
+        local Item = Instance.new(Class)
+        for Key, Value in pairs(Properties) do Item[Key] = Value end
+        return Item
+    end
+    local Gui = New("ScreenGui", {Name = "CinnamonDanceWheel", IgnoreGuiInset = true,
+        ResetOnSpawn = false, DisplayOrder = Library.Holder.Instance.DisplayOrder + 5,
+        ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = Library.Holder.Instance.Parent})
+    local Overlay = New("Frame", {Parent = Gui, Size = UDim2.fromScale(1, 1),
+        BackgroundColor3 = Color3.new(), BackgroundTransparency = 0.55, BorderSizePixel = 0, Visible = false})
+    local Wheel = New("Frame", {Parent = Overlay, AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(420, 420), BackgroundTransparency = 1})
+    local Scale = New("UIScale", {Parent = Wheel})
+    local function Text(Parent, Value, Position, Size, TextSize)
+        local Label = New("TextLabel", {Parent = Parent, Text = Value, FontFace = WheelFont,
+            Position = Position, Size = Size, BackgroundTransparency = 1,
+            TextColor3 = Color3.new(1, 1, 1), TextSize = TextSize, TextWrapped = true, ZIndex = 3})
+        FontLabels[#FontLabels + 1] = Label
+        return Label
+    end
+    Text(Wheel, "LOCKER EMOTES", UDim2.fromOffset(-40, -66), UDim2.fromOffset(500, 44), 34)
+    Text(Wheel, "CLICK AN EMOTE TO DANCE", UDim2.fromOffset(-40, 446), UDim2.fromOffset(500, 26), 19)
+    Text(Wheel, "ESC TO CANCEL", UDim2.fromOffset(60, 477), UDim2.fromOffset(300, 22), 16)
+    local Center = New("Frame", {Parent = Wheel, AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(172, 172),
+        BackgroundColor3 = Background, BackgroundTransparency = 0.05, BorderSizePixel = 0, ZIndex = 2})
+    New("UICorner", {Parent = Center, CornerRadius = UDim.new(1, 0)})
+    local Title = Text(Center, "CHOOSE AN EMOTE", UDim2.fromOffset(16, 45), UDim2.fromOffset(140, 60), 24)
+    local Hint = Text(Center, "Move your cursor", UDim2.fromOffset(12, 108), UDim2.fromOffset(148, 32), 15)
+    for Index = 1, 6 do
+        local Default = EmoteDefaults[Index]
+        local Slot = {Name = Default and Default.Name or "Dance " .. Index, Id = Default and Default.Id or ""}
+        S.Slots[Index] = Slot
+        local Sector = {Parts = {}}
+        Sectors[Index] = Sector
+        -- Radial strips form six wedges without requiring a downloaded wheel texture.
+        for Slice = 1, 14 do
+            local Degrees = (Index - 1) * 60 - 28 + (Slice - 0.5) * 4
+            local Angle = math.rad(Degrees)
+            Sector.Parts[Slice] = New("Frame", {Parent = Wheel,
+                AnchorPoint = Vector2.new(0.5, 0.5),
+                Position = UDim2.fromOffset(210 + math.sin(Angle) * 140, 210 - math.cos(Angle) * 140),
+                Size = UDim2.fromOffset(15, 100), Rotation = Degrees,
+                BorderSizePixel = 0, BackgroundColor3 = Background, BackgroundTransparency = 0.15})
+        end
+        local Angle = math.rad((Index - 1) * 60)
+        local X, Y = 210 + math.sin(Angle) * 140, 210 - math.cos(Angle) * 140
+        local Icon = Library:AddIcon(Wheel, "user", UDim2.fromOffset(X - 14, Y - 31), UDim2.fromOffset(28, 28), "Text")
+        Icon.ZIndex = 3
+        Sector.Label = Text(Wheel, Slot.Name, UDim2.fromOffset(X - 54, Y + 2), UDim2.fromOffset(108, 35), 18)
+    end
+    local function SetStatus(Message) if Status then Status:SetText(Message) end end
+    local DancingFromMenu = false
+    local function StopDance()
+        Revision += 1
+        if DanceSound then DanceSound:Stop(); DanceSound:Destroy(); DanceSound = nil end
+        if Track then pcall(function() Track:Stop(0.15); Track:Destroy() end) end
+        Track, DancingHumanoid, Started, DancingFromMenu = nil, nil, nil, false
+        SetStatus("No dance playing")
+    end
+    local function Humanoid()
+        local Character = Player.Character
+        return Character and Character:FindFirstChildOfClass("Humanoid")
+    end
+    local function Available(AllowMenuOpen)
+        local H = Humanoid()
+        return Alive and (S.Enabled or AllowMenuOpen) and H and H.Health > 0
+            and (AllowMenuOpen or not Library.MenuOpen) and not Library:IsGameMenuOpen()
+    end
+    local function Select(Index)
+        if Selected == Index then return end
+        Selected = Index
+        for Number, Sector in ipairs(Sectors) do
+            for _, Part in ipairs(Sector.Parts) do
+                Part.BackgroundColor3 = Number == Index and Blue or Background
+            end
+        end
+        local Slot = Index and S.Slots[Index]
+        Title.Text = Slot and string.upper(Slot.Name) or "CHOOSE AN EMOTE"
+        Hint.Text = Slot and (Slot.Id ~= "" and "Release to play" or "Set this slot's animation ID") or "Move your cursor"
+    end
+    local function Close()
+        S.Open, HeldInput = false, nil
+        Overlay.Visible = false
+        Run:UnbindFromRenderStep(Binding)
+        Actions:UnbindAction(Binding)
+        if SavedMouse then
+            Input.MouseBehavior, Input.MouseIconEnabled = SavedMouse.Behavior, SavedMouse.Icon
+            SavedMouse = nil
+        end
+        Select(nil)
+    end
+    local function Play(Index, FromMenu)
+        StopDance()
+        if not Available(FromMenu) then return end
+        local Slot, H = S.Slots[Index], Humanoid()
+        if Slot.Id == "" then SetStatus("Set an animation ID for " .. Slot.Name); return end
+        if H.FloorMaterial == Enum.Material.Air then SetStatus("Land before starting a dance"); return end
+        local Animator = H:FindFirstChildOfClass("Animator")
+        if not Animator then
+            Animator = Instance.new("Animator")
+            Animator.Parent = H
+        end
+        local Version = Revision
+        local Id = Slot.Id
+        SetStatus("Loading " .. Slot.Name .. "...")
+        task.spawn(function()
+            local Music, MusicError
+            if Id == TakeLId then
+                local Ready, Result = pcall(function()
+                    if not TakeLSoundAsset then
+                        local Path = Library.Folders.Assets .. "/take-the-l-fortnite-emote-audiotrimmer.mp3"
+                        Library:EnsureAsset(Path,
+                            "https://raw.githubusercontent.com/BigRigV3/Cinnamon/main/take-the-l-fortnite-emote-audiotrimmer.mp3", "mp3")
+                        TakeLSoundAsset = getcustomasset(Path)
+                    end
+                    return TakeLSoundAsset
+                end)
+                if Ready then Music = Result else MusicError = tostring(Result) end
+                if not Alive or Revision ~= Version or not Available(FromMenu) or Humanoid() ~= H or Slot.Id ~= Id then return end
+            end
+            local AnimationId = ResolveEmoteAnimation(Id)
+            if not Alive or Revision ~= Version or Humanoid() ~= H then return end
+            local Animation = Instance.new("Animation")
+            Animation.AnimationId = "rbxassetid://" .. AnimationId
+            local OK, Loaded = pcall(function() return Animator:LoadAnimation(Animation) end)
+            Animation:Destroy()
+            if not Alive or Revision ~= Version or not Available(FromMenu) or Humanoid() ~= H or Slot.Id ~= Id then
+                if OK and Loaded then Loaded:Destroy() end
+                return
+            end
+            if not OK or not Loaded then SetStatus("Could not load animation: " .. tostring(Loaded)); return end
+            Track, DancingHumanoid, Started, DancingFromMenu = Loaded, H, os.clock(), FromMenu == true
+            Loaded.Priority, Loaded.Looped = Enum.AnimationPriority.Action4, S.Loop
+            local Played, Error = pcall(function() Loaded:Play(0.15, 1, S.Speed) end)
+            if not Played then StopDance(); SetStatus("Could not play animation: " .. tostring(Error)); return end
+            while Alive and Revision == Version and Loaded.Length == 0 and os.clock() - Started < 8 do
+                task.wait(0.1)
+            end
+            if not Alive or Revision ~= Version then return end
+            if Loaded.Length == 0 then
+                StopDance()
+                SetStatus("Animation " .. AnimationId .. " could not load. Check asset access and character rig.")
+                return
+            end
+            if Music then
+                local AudioOK, AudioError = pcall(function()
+                    DanceSound = New("Sound", {Name = "TakeTheLEmoteMusic", Parent = game:GetService("SoundService"),
+                        SoundId = Music, Volume = 1, Looped = S.Loop, PlaybackSpeed = S.Speed})
+                    DanceSound:Play()
+                end)
+                if not AudioOK then
+                    if DanceSound then DanceSound:Destroy(); DanceSound = nil end
+                    MusicError = tostring(AudioError)
+                end
+            end
+            SetStatus("Playing " .. Slot.Name .. (MusicError and " (music unavailable: " .. MusicError .. ")" or ""))
+        end)
+    end
+    local function UpdateSelection(PointerPosition)
+        PointerPosition = PointerPosition or Input:GetMouseLocation()
+        PointerPosition = Vector2.new(PointerPosition.X, PointerPosition.Y)
+        local Delta = PointerPosition - (Wheel.AbsolutePosition + Wheel.AbsoluteSize / 2)
+        local Radius = Delta.Magnitude / Scale.Scale
+        local Index
+        if Radius >= 86 and Radius <= 208 then
+            local Angle = (math.deg(math.atan2(Delta.X, -Delta.Y)) + 360) % 360
+            Index = math.floor((Angle + 30) % 360 / 60) + 1
+        end
+        Select(Index)
+    end
+    local function Open(Key)
+        if S.Open or not Available() or Input:GetFocusedTextBox() then return end
+        S.Open, HeldInput = true, Key
+        SavedMouse = {Behavior = Input.MouseBehavior, Icon = Input.MouseIconEnabled}
+        Overlay.Visible = true
+        Scale.Scale = math.clamp(math.min(Overlay.AbsoluteSize.X / 540, Overlay.AbsoluteSize.Y / 620), 0.4, 1)
+        Actions:BindActionAtPriority(Binding, function() return Enum.ContextActionResult.Sink end,
+            false, Enum.ContextActionPriority.High.Value + 100, Enum.UserInputType.MouseButton1, Enum.UserInputType.MouseButton2)
+        Run:BindToRenderStep(Binding, Enum.RenderPriority.Last.Value + 10, function()
+            if not Available() or Input:GetFocusedTextBox() then Close(); return end
+            Input.MouseBehavior, Input.MouseIconEnabled = Enum.MouseBehavior.Default, true
+            UpdateSelection()
+        end)
+    end
+    local Section = Page:Section({Name = "Fortnite mode", Side = 1})
+    Section:Toggle({Name = "Enabled", Flag = "FortniteModeEnabled", Default = false, Callback = function(Value)
+        S.Enabled = Value
+        if not Value then Close(); StopDance() end
+    end})
+    Section:Button():Add("Open dance wheel", function() task.defer(function() Open(nil) end) end)
+    WheelBind = Section:Label("Open dance wheel (hold)"):Keybind({Flag = "FortniteWheelKeybind",
+        Default = Enum.KeyCode.B, Mode = "Hold"})
+    Section:Toggle({Name = "Loop dances", Flag = "FortniteLoop", Default = true, Callback = function(Value)
+        S.Loop = Value; if Track then Track.Looped = Value end
+        if DanceSound then DanceSound.Looped = Value end
+    end})
+    Section:Toggle({Name = "Stop when moving", Flag = "FortniteCancelOnMove", Default = true,
+        Callback = function(Value) S.CancelOnMove = Value end})
+    Section:Slider({Name = "Dance speed", Flag = "FortniteDanceSpeed", Min = 0.25, Max = 2,
+        Default = 1, Decimals = 0.05, Suffix = "x", Callback = function(Value)
+            S.Speed = Value; if Track then Track:AdjustSpeed(Value) end
+            if DanceSound then DanceSound.PlaybackSpeed = Value end
+        end})
+    Section:Button():Add("Stop dance", StopDance)
+    Section:Label("Test emotes without changing the camera")
+    for Index, Slot in ipairs(S.Slots) do
+        Section:Button():Add("Test " .. Slot.Name, function() Play(Index, true) end)
+    end
+    Status = Section:Label("No dance playing")
+    local SlotsSection = Page:Section({Name = "Dance wheel slots", Side = 2})
+    for Index, Slot in ipairs(S.Slots) do
+        SlotsSection:Textbox({Name = "Slot " .. Index .. " name", Flag = "FortniteSlot" .. Index .. "Name",
+            Default = Slot.Name, Finished = true, Callback = function(Value)
+                Slot.Name = tostring(Value):match("^%s*(.-)%s*$"):sub(1, 32)
+                if Slot.Name == "" then Slot.Name = "Dance " .. Index end
+                Sectors[Index].Label.Text = Slot.Name
+            end})
+        SlotsSection:Textbox({Name = "Slot " .. Index .. " animation ID", Flag = "FortniteSlot" .. Index .. "Id",
+            Default = Slot.Id, Placeholder = "Roblox animation ID or rbxassetid://ID", Finished = true,
+            Callback = function(Value)
+                Slot.Id = Library:NormalizeHitsoundId(Value) or ""
+                if tostring(Value):match("%S") and Slot.Id == "" then SetStatus("Invalid animation ID for slot " .. Index) end
+            end})
+    end
+    local function ApplyFontPath(Path)
+        local Definition = Library.Folders.Assets .. "/FortniteFont.current.json"
+        writefile(Definition, Http:JSONEncode({name = "FortniteWheel", faces = {{name = "Regular", weight = 400,
+            style = "normal", assetId = getcustomasset(Path)}}}))
+        local Face = Font.new(getcustomasset(Definition))
+        for _, Label in ipairs(FontLabels) do Label.FontFace = Face end
+    end
+    local FontPath = Library.Folders.Assets .. "/Fortnite.ttf"
+    if isfile(FontPath) then pcall(ApplyFontPath, FontPath)
+    elseif isfile(Library.Folders.Assets .. "/FortniteFont.current.json") then
+        pcall(function()
+            local Face = Font.new(getcustomasset(Library.Folders.Assets .. "/FortniteFont.current.json"))
+            for _, Label in ipairs(FontLabels) do Label.FontFace = Face end
+        end)
+    end
+    local FontURL = "https://raw.githubusercontent.com/BigRigV3/Cinnamon/main/Anton-Regular.ttf"
+    Section:Textbox({Name = "Wheel font URL (.ttf)", Flag = "FortniteFontURL", Default = "", Finished = true,
+        Placeholder = "Raw GitHub URL for your font", Callback = function(Value) FontURL = tostring(Value):match("^%s*(.-)%s*$") end})
+    Section:Button():Add("Load wheel font", function()
+        FontRevision += 1
+        local Version, URL = FontRevision, FontURL
+        SetStatus("Loading wheel font...")
+        task.spawn(function()
+            local OK, Error = pcall(function()
+                local Path = FontPath
+                if URL ~= "" then
+                    assert(URL:match("^https://"), "Use an HTTPS URL returning a TTF file")
+                    local Hash = 0
+                    for Index = 1, #URL do Hash = (Hash * 31 + URL:byte(Index)) % 4294967291 end
+                    Path = Library.Folders.Assets .. "/FortniteFont-" .. string.format("%08x", Hash) .. ".ttf"
+                    Library:EnsureAsset(Path, URL)
+                end
+                assert(isfile(Path), "Add Cinnamon/Assets/Fortnite.ttf or enter a font URL")
+                local Bytes = readfile(Path)
+                assert(Bytes:sub(1, 4) == string.char(0, 1, 0, 0) or Bytes:sub(1, 4) == "OTTO", "URL must return a font file")
+                if Alive and FontRevision == Version then ApplyFontPath(Path) end
+            end)
+            if Alive and FontRevision == Version then SetStatus(OK and "Wheel font loaded" or tostring(Error)) end
+        end)
+    end)
+    Section:Label("Use animation IDs that match your character's rig.")
+    local Connections = {}
+    local function Connect(Signal, Callback) Connections[#Connections + 1] = Signal:Connect(Callback) end
+    Connect(Input.InputBegan, function(Key, Processed)
+        if Key.KeyCode == Enum.KeyCode.Escape then Close(); StopDance(); return end
+        if S.Open and (Key.UserInputType == Enum.UserInputType.MouseButton1 or Key.UserInputType == Enum.UserInputType.Touch) then
+            UpdateSelection(Key.Position)
+            local Index = Selected
+            Close()
+            if Index then Play(Index) end
+            return
+        end
+        if Processed or not WheelBind or WheelBind.Picking or Input:GetFocusedTextBox() then return end
+        if tostring(Key.KeyCode) == WheelBind.Key or tostring(Key.UserInputType) == WheelBind.Key then Open(Key) end
+    end)
+    Connect(Input.InputEnded, function(Key)
+        if not S.Open or not HeldInput then return end
+        if Key.KeyCode ~= HeldInput.KeyCode or Key.UserInputType ~= HeldInput.UserInputType then return end
+        UpdateSelection()
+        local Index = Selected
+        Close()
+        if Index then Play(Index) end
+    end)
+    Connect(Input.WindowFocusReleased, function() Close(); StopDance() end)
+    Connect(Player.CharacterRemoving, function() Close(); StopDance() end)
+    local Monitor = Library:Connect(Run.Heartbeat, function()
+        if not Track then return end
+        local H = Humanoid()
+        if not Available(DancingFromMenu) or H ~= DancingHumanoid or H.Health <= 0
+            or H.FloorMaterial == Enum.Material.Air or H.Jump
+            or (S.CancelOnMove and H.MoveDirection.Magnitude > 0.05) then StopDance(); return end
+        if os.clock() - Started > 10 and Track.Length == 0 then
+            StopDance(); SetStatus("Animation unavailable. Check its ID, permissions and rig.")
+        elseif Track.Length > 0 and not Track.IsPlaying then StopDance() end
+    end, nil, 0.1)
+    UnloadCallbacks[#UnloadCallbacks + 1] = function()
+        Alive = false; FontRevision += 1
+        Close(); StopDance()
+        Monitor.Connection:Disconnect()
+        for _, Connection in ipairs(Connections) do Connection:Disconnect() end
+        Gui:Destroy()
+        if Library.FortniteMode == S then Library.FortniteMode = nil end
+    end
+    Library.FortniteMode = S
+end
+        end)()
+        BuildDanceWheel(Library, PlayerMiscPage, EffectsController, UnloadCallbacks)
+        end
                                                                                          
         do
         local CreateSoundESP = (function()
