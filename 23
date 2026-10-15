@@ -19534,6 +19534,8 @@ return function(Library, Page, Effects, UnloadCallbacks)
         {Name = "Bill Bounce", Id = "82441853772985"},
         {Name = "Take the L", Id = TakeLId},
         {Name = "Floss", Id = "5917570207"},
+        {Name = "Popular", Id = "71302743123422"}
+        {Name = "Nevy", Id = "125328720114284"}
     }
     local WheelBind, Status
     local Binding = "CinnamonDanceWheel_" .. Http:GenerateGUID(false)
