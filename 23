@@ -666,6 +666,27 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
         local Instances = { } do
             Instances.__index = Instances
 
+            local TextMeasurements = setmetatable({}, {__mode = "k"})
+            function Instances:MeasureLabel(Width)
+                local Text = self.Instance
+                local Cached = TextMeasurements[Text]
+                local Scale = Library.MenuScale or 1
+                if Cached and Cached.Text == Text.Text and Cached.Font == Text.FontFace
+                    and Cached.Size == Text.TextSize and Cached.Width == Width and Cached.LineHeight == Text.LineHeight
+                    and Cached.Scale == Scale then return Cached.Bounds end
+                local Measurement = {Text = Text.Text, Font = Text.FontFace, Size = Text.TextSize, Width = Width,
+                    LineHeight = Text.LineHeight, Scale = Scale}
+                local Params = InstanceNew("GetTextBoundsParams")
+                Params.Text, Params.Font, Params.Size, Params.Width = Measurement.Text, Measurement.Font,
+                    Measurement.Size * Scale, math.max(1, math.floor(Width * Scale))
+                local Success, Bounds = pcall(function() return game:GetService("TextService"):GetTextBoundsAsync(Params) end)
+                Params:Destroy()
+                Bounds = Success and Bounds or Text.TextBounds
+                Measurement.Bounds = Vector2New(Bounds.X / Scale, math.ceil(Bounds.Y * Measurement.LineHeight / Scale))
+                TextMeasurements[Text] = Measurement
+                return Measurement.Bounds
+            end
+
             Instances.Create = function(self, Class, Properties)
                 Library:YieldLoadingWork()
                 local NewItem = {
@@ -825,13 +846,83 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             end
 
             Instances.PlaceSubElements = function(self, Label, LeftOffset)
+                local Row, Text, Extras = self.Instance.Parent, Label.Instance, self.Instance
+                Text.AutomaticSize = Enum.AutomaticSize.None
+                Text.TextWrapped = true
+                Text.LineHeight = 1.25
+                Extras.AnchorPoint = Vector2New(0, 0.5)
+                Extras.Size = UDim2New(0, 0, 0, 18)
+                local MinimumHeight = math.max(18, Row.Size.Y.Offset)
+                local Pending, Revision = false, 0
                 local function UpdatePosition()
-                    if Library.Unloaded or not self.Instance.Parent then return end
-                    self.Instance.Position = UDim2New(0, LeftOffset + math.ceil(Label.Instance.TextBounds.X) + 14, 0, 0)
+                    Pending = false
+                    if Library.Unloaded or not Extras.Parent then return end
+                    local Version = Revision
+                    local Scale = Library.MenuScale or 1
+                    local Width = Row.AbsoluteSize.X / Scale
+                    local ExtraWidth = Extras.AbsoluteSize.X / Scale
+                    local Gap = ExtraWidth > 0 and 14 or 0
+                    local Available = math.max(24, Width - LeftOffset - ExtraWidth - Gap)
+                    Available = math.floor(Available)
+                    local Bounds = Label:MeasureLabel(Available)
+                    if Library.Unloaded or Revision ~= Version then return end
+                    local TextSize = UDim2New(0, Available, 0, math.max(15, math.ceil(Bounds.Y)))
+                    if Text.Size ~= TextSize then Text.Size = TextSize end
+                    local Height = math.max(MinimumHeight, math.ceil(Bounds.Y) + 4)
+                    local RowSize = UDim2.new(Row.Size.X, UDimNew(0, Height))
+                    if Row.Size ~= RowSize then Row.Size = RowSize end
+                    local Position = UDim2New(0, LeftOffset + math.min(math.ceil(Bounds.X), Available) + Gap, 0.5, 0)
+                    if Extras.Position ~= Position then Extras.Position = Position end
                 end
-                Library:Connect(Label.Instance:GetPropertyChangedSignal("TextBounds"), UpdatePosition)
-                UpdatePosition()
-                task.defer(UpdatePosition)
+                local function QueueUpdate()
+                    Revision += 1
+                    if Pending then return end
+                    Pending = true
+                    task.defer(UpdatePosition)
+                end
+                Library:Connect(Text:GetPropertyChangedSignal("TextBounds"), QueueUpdate)
+                Library:Connect(Text:GetPropertyChangedSignal("Text"), QueueUpdate)
+                Library:Connect(Text:GetPropertyChangedSignal("FontFace"), QueueUpdate)
+                Library:Connect(Text:GetPropertyChangedSignal("TextSize"), QueueUpdate)
+                Library:Connect(Row:GetPropertyChangedSignal("AbsoluteSize"), QueueUpdate)
+                Library:Connect(Extras:GetPropertyChangedSignal("AbsoluteSize"), QueueUpdate)
+                QueueUpdate()
+            end
+
+            Instances.FitControlLabel = function(self, Container, Value, MinimumHeight, BottomHeight)
+                local Text, Row = self.Instance, Container.Instance
+                Text.AutomaticSize, Text.TextWrapped = Enum.AutomaticSize.None, true
+                Text.LineHeight = 1.25
+                local Label = self
+                local Pending, Revision = false, 0
+                local function Update()
+                    Pending = false
+                    if Library.Unloaded or not Row.Parent then return end
+                    local Version = Revision
+                    local Scale = Library.MenuScale or 1
+                    local Reserved = Value and Value.Instance.AbsoluteSize.X / Scale + 8 or 0
+                    local Width = math.max(24, math.floor(Row.AbsoluteSize.X / Scale - Reserved))
+                    local Bounds = Label:MeasureLabel(Width)
+                    if Library.Unloaded or Revision ~= Version then return end
+                    local Size = UDim2New(0, Width, 0, math.max(15, math.ceil(Bounds.Y)))
+                    if Text.Size ~= Size then Text.Size = Size end
+                    local RowSize = UDim2.new(Row.Size.X, UDimNew(0,
+                        math.max(MinimumHeight, math.ceil(Bounds.Y) + BottomHeight)))
+                    if Row.Size ~= RowSize then Row.Size = RowSize end
+                end
+                local function QueueUpdate()
+                    Revision += 1
+                    if Pending then return end
+                    Pending = true
+                    task.defer(Update)
+                end
+                Library:Connect(Text:GetPropertyChangedSignal("TextBounds"), QueueUpdate)
+                Library:Connect(Text:GetPropertyChangedSignal("Text"), QueueUpdate)
+                Library:Connect(Text:GetPropertyChangedSignal("FontFace"), QueueUpdate)
+                Library:Connect(Text:GetPropertyChangedSignal("TextSize"), QueueUpdate)
+                Library:Connect(Row:GetPropertyChangedSignal("AbsoluteSize"), QueueUpdate)
+                if Value then Library:Connect(Value.Instance:GetPropertyChangedSignal("AbsoluteSize"), QueueUpdate) end
+                QueueUpdate()
             end
 
             Instances.MakeResizeable = function(self, Minimum, Maximum)
@@ -1146,19 +1237,24 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     end
                 end
                 if Changed then
-                    for _, Item in ipairs(self.Holder.Instance:GetDescendants()) do
-                        self:YieldLoadingWork()
-                        Apply(Item)
+                    for _, Holder in ipairs({self.Holder.Instance, self.UnusedHolder.Instance}) do
+                        for _, Item in ipairs(Holder:GetDescendants()) do
+                            self:YieldLoadingWork()
+                            Apply(Item)
+                        end
                     end
                     for Viewer in pairs(self.MenuFontViewers or {}) do Viewer:Render() end
                 end
                 if not self.MenuFontConnection then
-                    self.MenuFontConnection = self:Connect(self.Holder.Instance.DescendantAdded, function(Item)
+                    local function WatchFont(Item)
                         if not (Item:IsA("TextLabel") or Item:IsA("TextButton") or Item:IsA("TextBox")) then return end
                         task.defer(function()
-                            if self.Holder and Item:IsDescendantOf(self.Holder.Instance) then Apply(Item) end
+                            if not self.Unloaded and (Item:IsDescendantOf(self.Holder.Instance)
+                                or Item:IsDescendantOf(self.UnusedHolder.Instance)) then Apply(Item) end
                         end)
-                    end, "MenuFont")
+                    end
+                    self.MenuFontConnection = self:Connect(self.Holder.Instance.DescendantAdded, WatchFont, "MenuFont")
+                    self:Connect(self.UnusedHolder.Instance.DescendantAdded, WatchFont, "InactiveMenuFont")
                 end
                 return true
             end
@@ -1547,6 +1643,59 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             end)
         end
         Library:SetMenuScale(1)
+
+        function Library:PlacePopup(Popup, Anchor, MatchWidth)
+            local Scale = self.MenuScale
+            local Viewport = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or Vector2New(1920, 1080)
+            if not self.Holder.Instance.IgnoreGuiInset then
+                local Top, Bottom = game:GetService("GuiService"):GetGuiInset()
+                Viewport -= Top + Bottom
+            end
+            if MatchWidth then
+                local Layout = Popup:FindFirstChildOfClass("UIListLayout")
+                local ContentHeight = Layout and Layout.AbsoluteContentSize.Y / Scale + 10 or 25
+                Popup.Size = UDim2New(0, Anchor.AbsoluteSize.X / Scale, 0,
+                    math.min(ContentHeight, 240, math.max(25, Viewport.Y / Scale - 16)))
+            end
+            local Size = Vector2New(Popup.Size.X.Offset, Popup.Size.Y.Offset) * Scale
+            local Origin = Anchor.AbsolutePosition
+            local Y = Origin.Y + Anchor.AbsoluteSize.Y + 6 * Scale
+            if Y + Size.Y > Viewport.Y - 6 then Y = Origin.Y - Size.Y - 6 * Scale end
+            Popup.Position = UDim2New(0, math.clamp(Origin.X, 6, math.max(6, Viewport.X - Size.X - 6)),
+                0, math.clamp(Y, 6, math.max(6, Viewport.Y - Size.Y - 6)))
+        end
+
+        function Library:RaisePopup(Popup, Layer)
+            local Items = Popup:GetDescendants()
+            Items[#Items + 1] = Popup
+            for _, Item in ipairs(Items) do
+                if Item:IsA("GuiObject") then
+                    local Base = Item:GetAttribute("CinnamonPopupLayer") or Item.ZIndex
+                    Item:SetAttribute("CinnamonPopupLayer", Base)
+                    Item.ZIndex = Layer + Base
+                end
+            end
+        end
+
+        function Library:StyleMenuControl(Item)
+            if not Item:IsDescendantOf(self.Holder.Instance) and not Item:IsDescendantOf(self.UnusedHolder.Instance) then return end
+            if Item:IsA("UICorner") then Item.CornerRadius = UDimNew(0, 0); return end
+            if not Item:IsA("TextButton") or Item.Text == "" or Item.BackgroundTransparency == 1 then return end
+            Item.FontFace, Item.TextSize = self.Font, 9
+            Item.AutoButtonColor, Item.BorderSizePixel = false, 2
+            Item.BorderColor3, Item.TextTruncate = self.Theme.Border, Enum.TextTruncate.AtEnd
+            Item.TextStrokeColor3, Item.TextStrokeTransparency = self.Theme["Text Stroke"], 0.6
+            if self.ThemeMap[Item] then self.ThemeMap[Item].Properties.BorderColor3 = "Border"
+            else self:AddToTheme(Item, {BorderColor3 = "Border"}) end
+            local Stroke = Item:FindFirstChildOfClass("UIStroke") or InstanceNew("UIStroke")
+            Stroke.ApplyStrokeMode, Stroke.LineJoinMode, Stroke.Parent = Enum.ApplyStrokeMode.Border, Enum.LineJoinMode.Miter, Item
+            self:AddToTheme(Stroke, {Color = "Outline"})
+            local Gradient = Item:FindFirstChildOfClass("UIGradient") or InstanceNew("UIGradient")
+            Gradient.Rotation, Gradient.Parent = -165, Item
+            self:AddToTheme(Gradient, {Color = function()
+                return RGBSequence{RGBSequenceKeypoint(0, FromRGB(255, 255, 255)), RGBSequenceKeypoint(1, self.Theme.Gradient)}
+            end})
+        end
 
         Library.TrackPointer = function(self, Callback)
             if not self.ActivePointers then
@@ -1942,15 +2091,17 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     })
 
                     if Data.SubPages then
-                        Items["SubPages"] = Instances:Create("Frame", {
+                        Items["SubPages"] = Instances:Create("ScrollingFrame", {
                             Parent = Items["Page"].Instance,
                             Name = "\0",
-                            Size = UDim2New(0, 0, 0, 35),
+                            Size = UDim2New(1, 0, 0, 35),
                             BorderColor3 = FromRGB(57, 43, 47),
                             BorderSizePixel = 2,
-                            AutomaticSize = Enum.AutomaticSize.X,
+                            AutomaticCanvasSize = Enum.AutomaticSize.X, CanvasSize = UDim2New(),
+                            ScrollingDirection = Enum.ScrollingDirection.X, ScrollBarThickness = 2,
+                            ScrollBarImageColor3 = Library.Theme.Accent,
                             BackgroundColor3 = FromRGB(26, 22, 23)
-                        })  Items["SubPages"]:AddToTheme({BackgroundColor3 = "Page Background", BorderColor3 = "Outline"})
+                        })  Items["SubPages"]:AddToTheme({BackgroundColor3 = "Page Background", BorderColor3 = "Outline", ScrollBarImageColor3 = "Accent"})
 
                         Items["SubPages"]:Border("Border")
 
@@ -2254,12 +2405,14 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     Layout:Destroy()
                     for _, Column in ipairs(SubPage.ColumnsData) do Column:Clean() end
                     table.clear(SubPage.ColumnsData)
-                    Items["SubPages"] = Instances:Create("Frame", {
+                    Items["SubPages"] = Instances:Create("ScrollingFrame", {
                         Parent = Items["Page"].Instance, Name = "ESPDetailTabs",
-                        Size = UDim2New(0, 0, 0, 26), AutomaticSize = Enum.AutomaticSize.X,
+                        Size = UDim2New(1, 0, 0, 26), AutomaticCanvasSize = Enum.AutomaticSize.X,
+                        CanvasSize = UDim2New(), ScrollingDirection = Enum.ScrollingDirection.X,
+                        ScrollBarThickness = 2, ScrollBarImageColor3 = Library.Theme.Accent,
                         BorderSizePixel = 0, BackgroundColor3 = Library.Theme["Page Background"],
                     })
-                    Items["SubPages"]:AddToTheme({BackgroundColor3 = "Page Background"})
+                    Items["SubPages"]:AddToTheme({BackgroundColor3 = "Page Background", ScrollBarImageColor3 = "Accent"})
                     Items["SubPages"]:Border("Outline")
                     Instances:Create("UIPadding", {
                         Parent = Items["SubPages"].Instance,
@@ -2278,8 +2431,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     })
                 end
                 if Data.Page.ParentPage then
-                    Items["Inactive"].Instance.Size = UDim2New(0, 0, 0, 16)
-                    Items["Text"].Instance.TextSize = 8
+                    Items["Inactive"].Instance.Size = UDim2New(0, 0, 0, 20)
+                    Items["Text"].Instance.TextSize = 9
                 end
                 local Debounce = false
 
@@ -2797,6 +2950,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     Items["Value"]:TextBorder()
                 end
 
+                Items["Text"]:FitControlLabel(Items["Slider"], Items["Value"], 28, 13)
+
                 function Slider:Get()
                     return Slider.Value
                 end
@@ -3063,7 +3218,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         BackgroundColor3 = FromRGB(255, 255, 255)
                     })  Items["Icon"]:AddToTheme({ImageColor3 = "Accent"})
 
-                    Items["OptionHolder"] = Instances:Create("Frame", {
+                    Items["OptionHolder"] = Instances:Create("ScrollingFrame", {
                         Parent = Library.UnusedHolder.Instance,
                         Name = "\0",
                         Visible = false,
@@ -3072,9 +3227,12 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         Position = UDim2New(0, 0, 1, 8),
                         Size = UDim2New(1, 0, 0, 25),
                         ZIndex = 5,
-                        AutomaticSize = Enum.AutomaticSize.Y,
+                        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+                        CanvasSize = UDim2New(), ScrollingDirection = Enum.ScrollingDirection.Y,
+                        ScrollBarThickness = 3, ScrollBarImageColor3 = Library.Theme.Accent,
+                        ClipsDescendants = true,
                         BackgroundColor3 = FromRGB(26, 22, 23)
-                    })  Items["OptionHolder"]:AddToTheme({BackgroundColor3 = "Inline", BorderColor3 = "Border"})
+                    })  Items["OptionHolder"]:AddToTheme({BackgroundColor3 = "Inline", BorderColor3 = "Border", ScrollBarImageColor3 = "Accent"})
 
                     Instances:Create("UIStroke", {
                         Parent = Items["OptionHolder"].Instance,
@@ -3101,6 +3259,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     })
                 end
 
+                Items["Text"]:FitControlLabel(Items["Dropdown"], nil, 40, 25)
+
                 function Dropdown:Get()
                     return Dropdown.Value
                 end
@@ -3118,14 +3278,14 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     Debounce = true 
 
                     if Dropdown.IsOpen then 
+                        Library:RaisePopup(Items["OptionHolder"].Instance, 30)
                         Items["OptionHolder"].Instance.Visible = true
                         Items["OptionHolder"].Instance.Parent = Library.Holder.Instance
                         Items["Icon"]:Tween(nil, {Rotation = -90})
                         
-                        RenderStepped = ConnectScheduled(RunService.RenderStepped, function()
-                            Items["OptionHolder"].Instance.Position = UDim2New(0, Items["RealDropdown"].Instance.AbsolutePosition.X, 0, Items["RealDropdown"].Instance.AbsolutePosition.Y + Items["RealDropdown"].Instance.AbsoluteSize.Y + 5)
-                            Items["OptionHolder"].Instance.Size = UDim2New(0, Items["RealDropdown"].Instance.AbsoluteSize.X / Library.MenuScale, 0, 0)
-                        end)
+                        RenderStepped = Library:Connect(RunService.RenderStepped, function()
+                            Library:PlacePopup(Items["OptionHolder"].Instance, Items["RealDropdown"].Instance, true)
+                        end).Connection
 
                         if not Data.Debounce then Library:CloseOpenFrames(Dropdown) end
                         Library.OpenFrames[Dropdown] = Dropdown
@@ -3162,9 +3322,11 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     end
                     
                     NewTween.Tween.Completed:Connect(function()
+                        if not Library or Library.Unloaded then return end
                         Debounce = false 
                         Items["OptionHolder"].Instance.Visible = Dropdown.IsOpen
                         task.wait(0.2)
+                        if not Library or Library.Unloaded then return end
                         Items["OptionHolder"].Instance.Parent = not Dropdown.IsOpen and Library.UnusedHolder.Instance or Library.Holder.Instance
                     end)
                 end
@@ -4201,12 +4363,13 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     Debounce = true 
 
                     if Colorpicker.IsOpen then 
+                        Library:RaisePopup(Items["ColorpickerWindow"].Instance, Data.Debounce and 60 or 30)
                         Items["ColorpickerWindow"].Instance.Visible = true
                         Items["ColorpickerWindow"].Instance.Parent = Library.Holder.Instance
                         
-                        RenderStepped = ConnectScheduled(RunService.RenderStepped, function()
-                            Items["ColorpickerWindow"].Instance.Position = UDim2New(0, Items["ColorpickerButton"].Instance.AbsolutePosition.X, 0, Items["ColorpickerButton"].Instance.AbsolutePosition.Y + Items["ColorpickerButton"].Instance.AbsoluteSize.Y + 5)
-                        end)
+                        RenderStepped = Library:Connect(RunService.RenderStepped, function()
+                            Library:PlacePopup(Items["ColorpickerWindow"].Instance, Items["ColorpickerButton"].Instance)
+                        end).Connection
 
                         if not Data.Debounce then Library:CloseOpenFrames(Colorpicker) end
                         Library.OpenFrames[Colorpicker] = Colorpicker
@@ -4241,9 +4404,11 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     end
                     
                     NewTween.Tween.Completed:Connect(function()
+                        if not Library or Library.Unloaded then return end
                         Debounce = false 
                         Items["ColorpickerWindow"].Instance.Visible = Colorpicker.IsOpen
                         task.wait(0.2)
+                        if not Library or Library.Unloaded then return end
                         Items["ColorpickerWindow"].Instance.Parent = not Colorpicker.IsOpen and Library.UnusedHolder.Instance or Library.Holder.Instance
                     end)
                 end
@@ -4572,7 +4737,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         Name = "\0",
                         Position = UDim2New(0.007692307699471712, 0, 0.35323384404182434, 0),
                         BorderColor3 = FromRGB(12, 10, 11),
-                        Size = UDim2New(0, 70, 0, 90),
+                        Size = UDim2New(0, 90, 0, 92),
                         BorderSizePixel = 2,
                         BackgroundColor3 = FromRGB(19, 16, 17)
                     })  Items["KeybindWindow"]:AddToTheme({BackgroundColor3 = "Background", BorderColor3 = "Border"})
@@ -4762,12 +4927,13 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     Debounce = true 
 
                     if Keybind.IsOpen then 
+                        Library:RaisePopup(Items["KeybindWindow"].Instance, 30)
                         Items["KeybindWindow"].Instance.Visible = true
                         Items["KeybindWindow"].Instance.Parent = Library.Holder.Instance
                         
-                        RenderStepped = ConnectScheduled(RunService.RenderStepped, function()
-                            Items["KeybindWindow"].Instance.Position = UDim2New(0, Items["KeyButton"].Instance.AbsolutePosition.X, 0, Items["KeyButton"].Instance.AbsolutePosition.Y + Items["KeyButton"].Instance.AbsoluteSize.Y + 5)
-                        end)
+                        RenderStepped = Library:Connect(RunService.RenderStepped, function()
+                            Library:PlacePopup(Items["KeybindWindow"].Instance, Items["KeyButton"].Instance)
+                        end).Connection
 
                         Library:CloseOpenFrames(Keybind)
                         Library.OpenFrames[Keybind] = Keybind
@@ -4802,9 +4968,11 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     end
                     
                     NewTween.Tween.Completed:Connect(function()
+                        if not Library or Library.Unloaded then return end
                         Debounce = false 
                         Items["KeybindWindow"].Instance.Visible = Keybind.IsOpen
                         task.wait(0.2)
+                        if not Library or Library.Unloaded then return end
                         Items["KeybindWindow"].Instance.Parent = not Keybind.IsOpen and Library.UnusedHolder.Instance or Library.Holder.Instance
                     end)
                 end
@@ -5067,6 +5235,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 function Textbox:SetVisibility(Bool)
                     Items["Textbox"].Instance.Visible = Bool
                 end
+
+                Items["Text"]:FitControlLabel(Items["Textbox"], nil, 40, 25)
 
                 function Textbox:Set(Value)
                     if not Library or Library.Unloaded then return end
@@ -6165,10 +6335,9 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     BorderColor3 = FromRGB(12, 10, 11),
                     AnchorPoint = Vector2New(0, 1),
                     BackgroundTransparency = 0.4000000059604645,
-                    Position = UDim2New(0, 6, 1, -6),
-                    Size = UDim2New(0, 0, 0, 20),
+                    Position = UDim2New(0, 6, 1, -42),
+                    Size = UDim2New(1, -12, 0, 22),
                     BorderSizePixel = 2,
-                    AutomaticSize = Enum.AutomaticSize.X,
                     BackgroundColor3 = FromRGB(19, 16, 17)
                 })  Items["Search"]:AddToTheme({BackgroundColor3 = "Background", BorderColor3 = "Border"})
 
@@ -6196,13 +6365,12 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     TextColor3 = FromRGB(240, 231, 233),
                     BorderColor3 = FromRGB(0, 0, 0),
                     Text = "",
-                    Size = UDim2New(0, 0, 1, 0),
+                    Size = UDim2New(1, -24, 1, 0),
                     Position = UDim2New(0, 22, 0, 0),
                     BorderSizePixel = 0,
                     BackgroundTransparency = 1,
                     PlaceholderColor3 = FromRGB(183, 164, 169),
-                    AutomaticSize = Enum.AutomaticSize.X,
-                    PlaceholderText = "..",
+                    PlaceholderText = "Search features...",
                     TextSize = 9,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })  Items["Input"]:AddToTheme({TextColor3 = "Text", PlaceholderColor3 = "Placeholder Text"})
@@ -6216,13 +6384,15 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     PaddingLeft = UDimNew(0, 3)
                 })
 
-                Items["Pages"] = Instances:Create("Frame", {
+                Items["Pages"] = Instances:Create("ScrollingFrame", {
                     Parent = Items["Side"].Instance,
                     Name = "\0",
                     BackgroundTransparency = 1,
                     Position = UDim2New(0, 0, 0, 100),
                     BorderColor3 = FromRGB(0, 0, 0),
-                    Size = UDim2New(1, 0, 1, -135),
+                    Size = UDim2New(1, 0, 1, -170),
+                    CanvasSize = UDim2New(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+                    ScrollingDirection = Enum.ScrollingDirection.Y, ScrollBarThickness = 0,
                     BorderSizePixel = 0,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
@@ -6451,7 +6621,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
 
             local SearchResults = Instances:Create("ScrollingFrame", {
                 Parent = Items["Search"].Instance, Name = "FeatureSearchResults",
-                Position = UDim2New(0, 0, 1, 6), Size = UDim2New(0, 360, 0, 240),
+                AnchorPoint = Vector2New(0, 1),
+                Position = UDim2New(0, 0, 0, -6), Size = UDim2New(0, 360, 0, 240),
                 BackgroundColor3 = Library.Theme.Background, BorderSizePixel = 1,
                 BorderColor3 = Library.Theme.Outline, ScrollBarThickness = 4,
                 CanvasSize = UDim2New(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
@@ -7044,11 +7215,11 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     TextColor3 = FromRGB(240, 231, 233),
                     BorderColor3 = FromRGB(0, 0, 0),
                     Text = Section.Name,
-                    Size = UDim2New(0, 0, 0, 15),
+                    Size = UDim2New(1, -12, 0, 15),
                     BackgroundTransparency = 1,
                     Position = UDim2New(0, 6, 0, 5),
                     BorderSizePixel = 0,
-                    AutomaticSize = Enum.AutomaticSize.X,
+                    TextTruncate = Enum.TextTruncate.AtEnd,
                     TextSize = 9,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })  Items["Text"]:AddToTheme({TextColor3 = "Text"})
@@ -8419,13 +8590,15 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                             TextSize = 9,
                             AutoButtonColor = false,
                             AutomaticSize = Enum.AutomaticSize.X,
-                            Size = UDim2New(0, 72, 0, 15),
+                            Size = UDim2New(0, 72, 0, 20),
                             BackgroundTransparency = 0.25,
                             BackgroundColor3 = Library.Theme.Element,
                             BorderSizePixel = 0,
                         })
                         BindButton:AddToTheme({TextColor3 = "Text", BackgroundColor3 = "Element"})
                         BindButton:TextBorder()
+                        Instances:Create("UIPadding", {Parent = BindButton.Instance,
+                            PaddingLeft = UDimNew(0, 6), PaddingRight = UDimNew(0, 6)})
 
                         local function Refresh()
                             if not BindButton.Instance.Parent then return end
@@ -10005,6 +10178,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
         local Test = type(Testing) == "table" and Testing or {}
         local Player = Test.Player or Players.LocalPlayer
         local Remotes = Test.Remotes or ReplicatedStorage:WaitForChild("Remotes")
+        local MeleeInflict = Remotes:FindFirstChild("MeleeInflict")
         local ItemsList = ReplicatedStorage:WaitForChild("ItemsList")
         local RangedWeapons = ReplicatedStorage:FindFirstChild("RangedWeapons")
         local AmmoTypes = ReplicatedStorage:FindFirstChild("AmmoTypes")
@@ -10089,6 +10263,34 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 if Object:IsA("Model") and Object:FindFirstChildOfClass("Humanoid") then return Object end
                 Object = Object.Parent
             end
+        end
+
+        function Controller:IsCinnamonTarget(Target)
+            local Presence = Library.CinnamonPresence
+            if not Presence or typeof(Target) ~= "Instance" then return false end
+            local Owner
+            if Target:IsA("Player") then
+                Owner = Target
+            else
+                local Object = Target
+                while Object do
+                    if Object:IsA("Model") then
+                        Owner = Players:GetPlayerFromCharacter(Object)
+                        if Owner then break end
+                    end
+                    Object = Object.Parent
+                end
+            end
+            return Owner ~= nil and Owner ~= Player and Presence:IsUser(Owner) == true
+        end
+
+        function Controller:ShouldBlockDamage(Remote, Target, HitPart)
+            if Remote == nil then return false end
+            if Remote == Remotes.ProjectileInflict then return self:IsCinnamonTarget(Target) end
+            if Remote == MeleeInflict then
+                return self:IsCinnamonTarget(Target) or self:IsCinnamonTarget(HitPart)
+            end
+            return false
         end
 
         function Controller:GetCombatRatios()
@@ -10236,6 +10438,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             local Rage360 = self.Rage.FOV360 and self:IsRageActive()
             for _, Candidate in ipairs(Candidates) do
                 local Character = self:GetTargetCharacter(Candidate)
+                if self:IsCinnamonTarget(Character) then continue end
                 if self.Aim.FriendlyCheck and self:IsFriendlyTarget(Character) then continue end
                 local Bone = self:GetAimBone(Character)
                 local Humanoid = self:GetAimHumanoid(Character)
@@ -10318,6 +10521,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
     
         function Controller:GetTarget()
             local Character = self:GetTargetCharacter(self.Target)
+            if self:IsCinnamonTarget(Character) then return end
             if self.Aim.FriendlyCheck and self:IsFriendlyTarget(Character) then return end
             local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
             if self.Target and self.Target.Parent and Character and self.Part and Humanoid and Humanoid.Health > 0
@@ -11414,6 +11618,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
     
         local function ReportHit(Part, ShotId)
             if not Part or not Part.Parent then return false end
+            if Controller:IsCinnamonTarget(Part) then return false end
             local HitPart, Offset = Part, Part.CFrame:ToObjectSpace(CFrame.new(Part.Position))
             HitPart, Offset = Controller:ResolveHitReport(HitPart, Offset)
             ReportingHit = true
@@ -11697,6 +11902,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         and Method ~= "Create" and Method ~= "Play" and Method ~= "Resume" then
                         return NamecallOriginal(Remote, ...)
                     end
+                    if Method == "FireServer" and Controller:ShouldBlockDamage(Remote, ...) then return end
                     if Method == "Raycast" and Remote == workspace
                         and (Controller.Mods.InstantBullet or Controller.ProjectileSolution)
                         and (not checkcaller or not checkcaller()) then
@@ -15410,6 +15616,7 @@ end
         for Key, Value in pairs(Properties or {}) do Object[Key] = Value end
         Object.Parent = Parent
         if Theme then Library:AddToTheme({Instance = Object}, Theme) end
+        Library:StyleMenuControl(Object)
         return Object
     end
     local function Text(Parent, Name, Value, Position, Size, Alignment)
@@ -18394,6 +18601,7 @@ return function(Library, Page, UnloadCallbacks)
         for K, V in pairs(Properties) do Object[K] = V end
         Object.Parent = Parent
         if Theme then Library:AddToTheme({Instance = Object}, Theme) end
+        Library:StyleMenuControl(Object)
         return Object
     end
     local function Label(Parent, Name, Value, Position, Size)
@@ -21314,6 +21522,7 @@ end
             Params.FilterDescendantsInstances = Ignore
             local Best = S.FOV * S.FOV
             local function Consider(Character)
+                if Combat:IsCinnamonTarget(Character) then return end
                 if S.FriendlyCheck and Combat:IsFriendlyTarget(Character) then return end
                 local Humanoid = Combat:GetAimHumanoid(Character)
                 if not Humanoid or Humanoid.Health <= 0 then return end
@@ -21410,6 +21619,7 @@ end
             if not Speed then return end
             C:SelectTarget(Camera)
             local Part = C.Part
+            if Combat:IsCinnamonTarget(C.Target) then C:Invalidate(); return end
             if S.FriendlyCheck and Combat:IsFriendlyTarget(C.Target) then C:Invalidate(); return end
             local Humanoid = C.Target and C.Target:FindFirstChildOfClass("Humanoid")
             if not Part or not Part.Parent or not Humanoid or Humanoid.Health <= 0 then C:Invalidate(); return end
@@ -21484,6 +21694,7 @@ end
                 local Owner = Character and Players:GetPlayerFromCharacter(Character)
                 local TargetHumanoid = Character and Character:FindFirstChildOfClass("Humanoid")
                 return Owner ~= nil and Owner ~= Player and TargetHumanoid ~= nil and TargetHumanoid.Health > 0
+                    and not Combat:IsCinnamonTarget(Character)
                     and (not S.FriendlyCheck or not Combat:IsFriendlyTarget(Character))
             end
             return false
@@ -21953,6 +22164,7 @@ end
                 local Object = Instance.new(Class)
                 for Key, Value in pairs(Props) do Object[Key] = Value end
                 if Theme then Library:AddToTheme(Object, Theme) end
+                Library:StyleMenuControl(Object)
                 return Object
             end
             local function Label(Parent, Text, Height)
