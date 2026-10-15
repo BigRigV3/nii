@@ -2019,28 +2019,30 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         BorderColor3 = FromRGB(12, 10, 11),
                         Text = "",
                         AutoButtonColor = false,
-                        BackgroundTransparency = 0.6000000238418579,
-                        Size = UDim2New(1, 0, 0, 25),
+                        BackgroundTransparency = 0,
+                        Size = UDim2New(1, 0, 0, 28),
                         BorderSizePixel = 2,
                         TextSize = 14,
                         BackgroundColor3 = FromRGB(31, 26, 28)
-                    })  Items["Inactive"]:AddToTheme({BackgroundColor3 = "Page Background", BorderColor3 = "Border"})
+                    })  Items["Inactive"]:AddToTheme({BackgroundColor3 = "Background", BorderColor3 = "Border"})
 
                     Items["ButtonBorder"] = Instances:Create("UIStroke", {
                         Parent = Items["Inactive"].Instance,
                         Name = "\0",
                         Color = FromRGB(61, 60, 65),
-                        Transparency = 0.6,
+                        Transparency = 0.3,
                         LineJoinMode = Enum.LineJoinMode.Miter,
                         ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-                    })  Items["ButtonBorder"]:AddToTheme({Color = "Outline"})
+                    })  Items["ButtonBorder"]:AddToTheme({Color = function()
+                        return Page.Active and Library.Theme.Accent or Library.Theme.Outline
+                    end})
 
                     Items["Liner"] = Instances:Create("Frame", {
                         Parent = Items["Inactive"].Instance,
                         Name = "\0",
                         BackgroundTransparency = 1,
                         BorderColor3 = FromRGB(0, 0, 0),
-                        Size = UDim2New(0, 1, 1, 0),
+                        Size = UDim2New(0, 2, 1, 0),
                         BorderSizePixel = 0,
                         BackgroundColor3 = FromRGB(31, 26, 28)
                     })  Items["Liner"]:AddToTheme({BackgroundColor3 = "Accent"})
@@ -2055,12 +2057,14 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         AnchorPoint = Vector2New(0, 0.5),
                         Size = UDim2New(0, 0, 0, 15),
                         BackgroundTransparency = 1,
-                        Position = UDim2New(0, 8, 0.5, 0),
+                        Position = UDim2New(0, 12, 0.5, 0),
                         BorderSizePixel = 0,
                         AutomaticSize = Enum.AutomaticSize.X,
                         TextSize = 9,
                         BackgroundColor3 = FromRGB(255, 255, 255)
-                    })  Items["Text"]:AddToTheme({TextColor3 = "Text"})
+                    })  Items["Text"]:AddToTheme({TextColor3 = function()
+                        return Page.Active and Library.Theme.Accent or Library.Theme.Text
+                    end})
 
                     Items["TextStroke"] = Items["Text"]:TextBorder()
 
@@ -2091,19 +2095,25 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     })
 
                     if Data.SubPages then
+                        Items["Navigation"] = Instances:Create("Frame", {
+                            Parent = Items["Page"].Instance, Name = "PageNavigation",
+                            Size = UDim2New(1, 0, 0, 36), BorderSizePixel = 2,
+                            BackgroundColor3 = Library.Theme.Inline, BorderColor3 = Library.Theme.Border,
+                        })
+                        Items["Navigation"]:AddToTheme({BackgroundColor3 = "Inline", BorderColor3 = "Border"})
+                        Items["Navigation"]:Border("Outline")
                         Items["SubPages"] = Instances:Create("ScrollingFrame", {
-                            Parent = Items["Page"].Instance,
+                            Parent = Items["Navigation"].Instance,
                             Name = "\0",
-                            Size = UDim2New(1, 0, 0, 35),
+                            Position = UDim2New(0, 4, 0, 4), Size = UDim2New(1, -8, 1, -8),
+                            BackgroundTransparency = 1,
                             BorderColor3 = FromRGB(57, 43, 47),
-                            BorderSizePixel = 2,
+                            BorderSizePixel = 0,
                             AutomaticCanvasSize = Enum.AutomaticSize.X, CanvasSize = UDim2New(),
                             ScrollingDirection = Enum.ScrollingDirection.X, ScrollBarThickness = 2,
                             ScrollBarImageColor3 = Library.Theme.Accent,
                             BackgroundColor3 = FromRGB(26, 22, 23)
-                        })  Items["SubPages"]:AddToTheme({BackgroundColor3 = "Page Background", BorderColor3 = "Outline", ScrollBarImageColor3 = "Accent"})
-
-                        Items["SubPages"]:Border("Border")
+                        })  Items["SubPages"]:AddToTheme({ScrollBarImageColor3 = "Accent"})
 
                         Instances:Create("UIPadding", {
                             Parent = Items["SubPages"].Instance,
@@ -2117,7 +2127,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                             Name = "\0",
                             VerticalAlignment = Enum.VerticalAlignment.Center,
                             FillDirection = Enum.FillDirection.Horizontal,
-                            Padding = UDimNew(0, 12),
+                            Padding = UDimNew(0, 8),
                             SortOrder = Enum.SortOrder.LayoutOrder
                         })
 
@@ -2125,9 +2135,9 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                             Parent = Items["Page"].Instance,
                             Name = "\0",
                             BackgroundTransparency = 1,
-                            Position = UDim2New(0, 0, 0, 51),
+                            Position = UDim2New(0, 0, 0, 48),
                             BorderColor3 = FromRGB(57, 43, 47),
-                            Size = UDim2New(1, 0, 1, -51),
+                            Size = UDim2New(1, 0, 1, -48),
                             BorderSizePixel = 0,
                             BackgroundColor3 = FromRGB(255, 255, 255)
                         })
@@ -2194,19 +2204,21 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     Items["Page"].Instance.Parent = Page.LayoutFloating or (Bool and Data.ContentHolder.Instance or Library.UnusedHolder.Instance)
 
                     if Page.Active then
-                        Items["Inactive"]:Tween(nil, {BackgroundTransparency = 0})
-                        Items["ButtonBorder"]:Tween(nil, {Transparency = 0})
+                        Items["Inactive"]:ChangeItemTheme({BackgroundColor3 = "Element", BorderColor3 = "Border"})
+                        Items["Inactive"]:Tween(nil, {BackgroundColor3 = Library.Theme.Element})
+                        Items["ButtonBorder"]:Tween(nil, {Transparency = 0, Color = Library.Theme.Accent})
                         Items["Glow"]:Tween(nil, {BackgroundTransparency = 0})
                         Items["Liner"]:Tween(nil, {BackgroundTransparency = 0})
-                        Items["Text"]:Tween(nil, {Position = UDim2New(0, 13, 0.5, 0)})
+                        Items["Text"]:Tween(nil, {Position = UDim2New(0, 16, 0.5, 0), TextColor3 = Library.Theme.Accent})
 
                         Library.CurrentPage = Page
                     else
-                        Items["Inactive"]:Tween(nil, {BackgroundTransparency = 0.6})
-                        Items["ButtonBorder"]:Tween(nil, {Transparency = 0.6})
+                        Items["Inactive"]:ChangeItemTheme({BackgroundColor3 = "Background", BorderColor3 = "Border"})
+                        Items["Inactive"]:Tween(nil, {BackgroundColor3 = Library.Theme.Background})
+                        Items["ButtonBorder"]:Tween(nil, {Transparency = 0.3, Color = Library.Theme.Outline})
                         Items["Glow"]:Tween(nil, {BackgroundTransparency = 1})
                         Items["Liner"]:Tween(nil, {BackgroundTransparency = 1})
-                        Items["Text"]:Tween(nil, {Position = UDim2New(0, 8, 0.5, 0)})
+                        Items["Text"]:Tween(nil, {Position = UDim2New(0, 12, 0.5, 0), TextColor3 = Library.Theme.Text})
                     end
 
                      
@@ -2229,8 +2241,9 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 end)
 
                 Items["Inactive"]:OnHoverLeave(function()
-                    Items["Inactive"]:ChangeItemTheme({BackgroundColor3 = "Page Background", BorderColor3 = "Border"})
-                    Items["Inactive"]:Tween(nil, {BackgroundColor3 = Library.Theme["Page Background"]})
+                    local Theme = Page.Active and "Element" or "Background"
+                    Items["Inactive"]:ChangeItemTheme({BackgroundColor3 = Theme, BorderColor3 = "Border"})
+                    Items["Inactive"]:Tween(nil, {BackgroundColor3 = Library.Theme[Theme]})
                 end)
 
                 if #Data.Window.Pages == 0 then 
@@ -2407,12 +2420,12 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     table.clear(SubPage.ColumnsData)
                     Items["SubPages"] = Instances:Create("ScrollingFrame", {
                         Parent = Items["Page"].Instance, Name = "ESPDetailTabs",
-                        Size = UDim2New(1, 0, 0, 26), AutomaticCanvasSize = Enum.AutomaticSize.X,
+                        Size = UDim2New(1, 0, 0, 28), AutomaticCanvasSize = Enum.AutomaticSize.X,
                         CanvasSize = UDim2New(), ScrollingDirection = Enum.ScrollingDirection.X,
                         ScrollBarThickness = 2, ScrollBarImageColor3 = Library.Theme.Accent,
-                        BorderSizePixel = 0, BackgroundColor3 = Library.Theme["Page Background"],
+                        BorderSizePixel = 0, BackgroundColor3 = Library.Theme.Background,
                     })
-                    Items["SubPages"]:AddToTheme({BackgroundColor3 = "Page Background", ScrollBarImageColor3 = "Accent"})
+                    Items["SubPages"]:AddToTheme({BackgroundColor3 = "Background", ScrollBarImageColor3 = "Accent"})
                     Items["SubPages"]:Border("Outline")
                     Instances:Create("UIPadding", {
                         Parent = Items["SubPages"].Instance,
@@ -2427,7 +2440,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     Items["Columns"] = Instances:Create("Frame", {
                         Parent = Items["Page"].Instance, Name = "ESPDetailContent",
                         BackgroundTransparency = 1, BorderSizePixel = 0,
-                        Position = UDim2New(0, 0, 0, 38), Size = UDim2New(1, 0, 1, -38),
+                        Position = UDim2New(0, 0, 0, 40), Size = UDim2New(1, 0, 1, -40),
                     })
                 end
                 if Data.Page.ParentPage then
@@ -6400,6 +6413,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 Instances:Create("UIPadding", {
                     Parent = Items["Pages"].Instance,
                     Name = "\0",
+                    PaddingTop = UDimNew(0, 5),
+                    PaddingBottom = UDimNew(0, 5),
                     PaddingRight = UDimNew(0, 8),
                     PaddingLeft = UDimNew(0, 8)
                 })
@@ -10206,6 +10221,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             FOVCircles = {},
         }
         local Connections, Wrappers, Originals, AttributeOriginals = {}, {}, {}, {}
+        local DamageOwners = setmetatable({}, {__mode = "k"})
+        local ProjectileInflict = Remotes.ProjectileInflict
         local AppliedValues = {}
         local FPS, Bullet, FunctionLibrary, LiveFPS, NamecallOriginal, NamecallHook
         local NamecallDispatch, NamecallHandler
@@ -10284,13 +10301,26 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             return Owner ~= nil and Owner ~= Player and Presence:IsUser(Owner) == true
         end
 
+        function Controller:IndexDamageCharacter(Character, UserId)
+            -- Resolve ownership outside __namecall so the guard cannot change its method context.
+            DamageOwners[Character] = UserId
+            for _, Object in ipairs(Character:GetDescendants()) do DamageOwners[Object] = UserId end
+            table.insert(Connections, Character.DescendantAdded:Connect(function(Object)
+                DamageOwners[Object] = UserId
+            end))
+            table.insert(Connections, Character.DescendantRemoving:Connect(function(Object)
+                DamageOwners[Object] = nil
+            end))
+        end
+
         function Controller:ShouldBlockDamage(Remote, Target, HitPart)
-            if Remote == nil then return false end
-            if Remote == Remotes.ProjectileInflict then return self:IsCinnamonTarget(Target) end
-            if Remote == MeleeInflict then
-                return self:IsCinnamonTarget(Target) or self:IsCinnamonTarget(HitPart)
-            end
-            return false
+            if Remote == nil or (Remote ~= ProjectileInflict and Remote ~= MeleeInflict) then return false end
+            local Presence = Library.CinnamonPresence
+            if not Presence then return false end
+            local Owner = Target ~= nil and DamageOwners[Target]
+            if Owner and Presence:IsUserId(Owner) then return true end
+            Owner = Remote == MeleeInflict and HitPart ~= nil and DamageOwners[HitPart]
+            return Owner ~= nil and Owner ~= false and Presence:IsUserId(Owner) == true
         end
 
         function Controller:GetCombatRatios()
@@ -11847,7 +11877,9 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                                 ForceHit = Solution.ForceHit, Created = ManipulationClock()}
                         else
                             Controller.ProjectileSolution = nil
-                            Part = nil
+                            -- Silent aim may aim through cover when visibility filtering is disabled.
+                            -- Keep native collision; special shot solutions alone may force a hit.
+                            if not SilentAllowed or Controller.Aim.VisCheck then Part = nil end
                         end
                     end
                     local TargetModel = Controller:GetTargetCharacter(Controller.Target)
@@ -11872,6 +11904,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         end
                         local Base = AimPart
                         local AimTarget = TargetPosition or (Context.Part or Part).Position
+                        Context.AimPoint = AimTarget
                         AimPart = setmetatable({CFrame = CFrame.lookAt(Origin, AimTarget), Position = Origin}, {
                             __index = function(_, Key) return Base[Key] end,
                         })
@@ -11959,7 +11992,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                             Shot = {Id = Args[2], Created = os.clock(), Accepted = false,
                                 Part = Context and Context.Part, Origin = Context and Context.Origin,
                                 Manipulated = Context and Context.Manipulated == true, Kind = Context and Context.Kind,
-                                Ammo = Context and Context.Ammo, Direction = Args[1],
+                                Ammo = Context and Context.Ammo, Direction = Args[1], AimPoint = Context and Context.AimPoint,
                                 WorldModel = Context and Context.WorldModel, ViewModel = Context and Context.ViewModel}
                             Shots[Args[2]] = Shot
                             if Controller.ProjectileSolution then Controller.ProjectileSolution.ShotId = Shot.Id end
@@ -11968,7 +12001,10 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                                                                                                             
                         local Results = table.pack(Forward(Remote, Method, table.unpack(Args, 1, Args.n)))
                         if Fire then
-                            Shot.Accepted = Results[1] == true
+                            -- Match the native bullet code's truthiness check and retain the reply for diagnostics.
+                            Shot.Reply, Shot.ReplyType = Results[1], type(Results[1])
+                            Shot.Accepted = not not Results[1]
+                            Controller.LastShot = Shot
                             Controller.LastShotAccepted, Controller.LastShotId = Shot.Accepted, Shot.Id
                             Controller:DeferShotFeedback("OnShotResult", Shot, Results[1])
                             if Shot.Accepted then
@@ -11979,7 +12015,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                                                                                                       
                         return table.unpack(Results, 1, Results.n)
                     end
-                    return NamecallOriginal(Remote, ...)
+                    return Forward(Remote, Method, ...)
                 end
                                                                                  
                                                                                   
@@ -12064,6 +12100,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             self:RestoreManipulation()
             if not Testing then ContextActions:UnbindAction("CinnamonPacketReload") end
             for _, Connection in ipairs(Connections) do Connection:Disconnect() end
+            table.clear(DamageOwners)
             if AmmoConnection then AmmoConnection:Disconnect(); AmmoConnection = nil end
             for _, Entry in ipairs(Wrappers) do
                 if Entry.Table[Entry.Key] == Entry.Wrapper then Entry.Table[Entry.Key] = Entry.Original end
@@ -12082,6 +12119,16 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
         end
     
         if not Testing then
+            local function WatchDamageOwner(Owner)
+                if Owner == Player then return end
+                local UserId = Owner.UserId
+                table.insert(Connections, Owner.CharacterAdded:Connect(function(Character)
+                    Controller:IndexDamageCharacter(Character, UserId)
+                end))
+                if Owner.Character then Controller:IndexDamageCharacter(Owner.Character, UserId) end
+            end
+            table.insert(Connections, Players.PlayerAdded:Connect(WatchDamageOwner))
+            for _, Owner in ipairs(Players:GetPlayers()) do WatchDamageOwner(Owner) end
             InstallHooks()
             table.insert(Connections, ConnectScheduled(RunService.Heartbeat, function()
                 Controller:UpdateForceHitbox()
@@ -16257,8 +16304,12 @@ end
     Library.CinnamonPresence = Presence
     do
         local Http = game:GetService("HttpService")
-        local Send = request or http_request
-        local Endpoint = "https://api.cinnamon.pub/v1/presence"
+        local Send = type(request) == "function" and request or type(http_request) == "function" and http_request
+            or type(http) == "table" and type(http.request) == "function" and http.request
+            or type(syn) == "table" and type(syn.request) == "function" and syn.request
+        local Endpoints = {"https://api.cinnamon.pub/v1/presence",
+            "https://cinnamon-presence.evilbigrig.workers.dev/v1/presence"}
+        local EndpointIndex = 1
         local Session, Busy, Failures = nil, false, 0
         local RequestId, RequestStarted, RequestThread = 0, 0, nil
         local RefreshUntil, RefreshPending, LastPoll = 0, false, -math.huge
@@ -16268,10 +16319,41 @@ end
         end
         local function Leave(Token)
             if not Token or type(Send) ~= "function" then return end
+            local Endpoint = Endpoints[EndpointIndex]
             task.spawn(function()
                 pcall(Send, {Url = Endpoint, Method = "DELETE",
                     Headers = {["Content-Type"] = "application/json"}, Body = Payload(Token)})
             end)
+        end
+        local function RequestPresence(Token)
+            local Body = Payload(Token)
+            local LastError = "Presence connection failed"
+            for Offset = 0, #Endpoints - 1 do
+                local Index = (EndpointIndex + Offset - 1) % #Endpoints + 1
+                local OK, Reply = pcall(Send, {Url = Endpoints[Index], Method = "POST",
+                    Headers = {["Content-Type"] = "application/json"}, Body = Body})
+                if OK and type(Reply) == "table" then
+                    local Status = tonumber(Reply.StatusCode or Reply.Status or Reply.status_code)
+                    Presence.LastStatus = Status
+                    if Status == 401 then return nil, "Presence session expired", Status end
+                    if Status == 429 then return nil, "Presence rate limited", Status end
+                    if Status == 400 then return nil, "Presence request rejected (HTTP 400)", Status end
+                    if Status == 200 then
+                        local Parsed, Data = pcall(Http.JSONDecode, Http, Reply.Body or Reply.body or "")
+                        if Parsed and type(Data) == "table" and type(Data.sessionToken) == "string"
+                            and type(Data.userIds) == "table" then
+                            EndpointIndex = Index
+                            return Data
+                        end
+                        LastError = "Invalid presence response"
+                    else
+                        LastError = Status and "Presence HTTP " .. Status or "Invalid HTTP response"
+                    end
+                else
+                    LastError = "Presence connection failed"
+                end
+            end
+            return nil, LastError
         end
         local function Poll()
             local Now = os.clock()
@@ -16279,6 +16361,7 @@ end
                 RequestId += 1
                 Busy = false
                 if RequestThread then pcall(task.cancel, RequestThread) end
+                EndpointIndex = EndpointIndex % #Endpoints + 1
                 Presence.Error, Presence.NextUpdate = "Presence request timed out", Now + 5
             end
             if not Alive or not Presence.Enabled or Busy or os.clock() < Presence.NextUpdate then return end
@@ -16289,16 +16372,15 @@ end
             local Attempt = RequestId
             RequestStarted, LastPoll = Now, Now
             local Generation = Presence.Generation
+            Presence.LastStatus = nil
             RequestThread = task.spawn(function()
                 local Success, Result = pcall(function()
-                    local Reply = Send({Url = Endpoint, Method = "POST",
-                        Headers = {["Content-Type"] = "application/json"}, Body = Payload(Session)})
-                    if type(Reply) ~= "table" then error("Presence API unavailable") end
-                    if Reply.StatusCode == 401 and Attempt == RequestId then Session = nil end
-                    assert(Reply.StatusCode == 200, "Presence API unavailable (" .. tostring(Reply.StatusCode) .. ")")
-                    local Data = Http:JSONDecode(Reply.Body)
-                    assert(type(Data) == "table" and type(Data.sessionToken) == "string"
-                        and type(Data.userIds) == "table", "Invalid presence response")
+                    local Data, Error, Status = RequestPresence(Session)
+                    if Status == 401 and Session and Attempt == RequestId then
+                        Session = nil
+                        Data, Error = RequestPresence(nil)
+                    end
+                    if not Data then error(Error or "Presence request failed", 0) end
                     return Data
                 end)
                 if Attempt ~= RequestId then return end
@@ -16319,13 +16401,17 @@ end
                     Presence.Error = nil
                 else
                     Failures = math.min(Failures + 1, 5)
-                    Presence.NextUpdate = os.clock() + math.min(120, 5 * 2 ^ (Failures - 1))
+                    Presence.NextUpdate = os.clock() + math.max(Presence.LastStatus == 429 and 30 or 0,
+                        math.min(120, 5 * 2 ^ (Failures - 1)))
                     Presence.Error = tostring(Result)
                 end
             end)
         end
+        function Presence:IsUserId(UserId)
+            return self.Enabled and os.clock() - self.Updated < 90 and self.Users[UserId] == true
+        end
         function Presence:IsUser(Player)
-            return self.Enabled and os.clock() - self.Updated < 90 and self.Users[Player.UserId] == true
+            return self:IsUserId(Player.UserId)
         end
         local ChatService = game:GetService("TextChatService")
         local ReadCallback = getcallbackvalue or getcallbackmember
@@ -16357,6 +16443,7 @@ end
             Busy, LastPoll, RefreshPending = false, -math.huge, false
             self.Generation += 1
             self.Enabled, self.NextUpdate, self.Updated = Value == true, 0, 0
+            self.Error = nil
             table.clear(self.Users)
             Leave(Session); Session = nil
             if self.Enabled then Poll() end
@@ -16389,7 +16476,7 @@ end
             Status:SetText(not Presence.Enabled and "Presence disabled"
                 or type(Send) ~= "function" and "Your executor does not support HTTP requests"
                 or game.JobId == "" and "Join a Roblox server to use presence"
-                or Presence.Error and "Presence API unavailable; retrying"
+                or Presence.Error and (Presence.Error .. "; retrying")
                 or Presence.Updated == 0 and "Connecting..."
                 or Count .. " other Cinnamon users in this server")
         end, 1)
@@ -19302,27 +19389,47 @@ end
                 Object.Parent = Parent
                 return Object
             end
-            local PreviewToggle = New("TextButton", Menu, {Name = "ESPPreviewToggle", Position = UDim2.new(1, -154, 0, 7),
-                Size = UDim2.fromOffset(142, 22), BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
+            local Navigation = VisualsPage.Items.Navigation.Instance
+            VisualsPage.Items.SubPages.Instance.Size = UDim2.new(1, -140, 1, -8)
+            local PreviewToggle = New("TextButton", Navigation, {Name = "ESPPreviewToggle",
+                AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0),
+                Size = UDim2.fromOffset(120, 22), BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
                 Visible = false, ZIndex = 20})
-            local ToggleBox = New("Frame", PreviewToggle, {Position = UDim2.fromOffset(2, 4), Size = UDim2.fromOffset(13, 13),
-                BackgroundColor3 = Library.Theme.Element, BorderColor3 = Library.Theme.Border, BorderSizePixel = 1, ZIndex = 21})
-            Library:AddToTheme(ToggleBox, {BackgroundColor3 = "Element", BorderColor3 = "Border"})
-            local ToggleMark = New("Frame", ToggleBox, {Position = UDim2.fromOffset(3, 3), Size = UDim2.fromOffset(7, 7),
-                BackgroundColor3 = Library.Theme.Accent, BorderSizePixel = 0, Visible = Preview.Enabled, ZIndex = 22})
-            Library:AddToTheme(ToggleMark, {BackgroundColor3 = "Accent"})
-            local ToggleLabel = New("TextLabel", PreviewToggle, {Position = UDim2.fromOffset(21, 0), Size = UDim2.new(1, -21, 1, 0),
-                BackgroundTransparency = 1, Text = "ESP preview", FontFace = Library.Font, TextSize = 10,
-                TextColor3 = Library.Theme.Text, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 21})
+            local Hovered = false
+            local function CheckboxColor()
+                return Preview.Enabled and Library.Theme.Accent or (Hovered and Library.Theme["Hovered Element"] or Library.Theme.Element)
+            end
+            local ToggleBox = New("Frame", PreviewToggle, {Name = "Checkbox", AnchorPoint = Vector2.new(0, 0.5),
+                Position = UDim2.new(0, 4, 0.5, 0), Size = UDim2.fromOffset(12, 12),
+                BackgroundColor3 = CheckboxColor(), BorderColor3 = Library.Theme.Border, BorderSizePixel = 2, ZIndex = 21})
+            Library:AddToTheme(ToggleBox, {BackgroundColor3 = CheckboxColor, BorderColor3 = "Border"})
+            local ToggleOutline = New("UIStroke", ToggleBox, {ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+                LineJoinMode = Enum.LineJoinMode.Miter, Color = Library.Theme.Outline, Thickness = 1})
+            Library:AddToTheme(ToggleOutline, {Color = "Outline"})
+            local ToggleGradient = New("UIGradient", ToggleBox, {Rotation = -165})
+            Library:AddToTheme(ToggleGradient, {Color = function()
+                return ColorSequence.new(Color3.new(1, 1, 1), Library.Theme.Gradient)
+            end})
+            local ToggleLabel = New("TextLabel", PreviewToggle, {Position = UDim2.fromOffset(26, 0), Size = UDim2.new(1, -26, 1, 0),
+                BackgroundTransparency = 1, Text = "ESP preview", FontFace = Library.Font, TextSize = 9,
+                TextColor3 = Library.Theme.Text, TextXAlignment = Enum.TextXAlignment.Left,
+                TextStrokeColor3 = Library.Theme["Text Stroke"], TextStrokeTransparency = 0.6, ZIndex = 21})
             Library:AddToTheme(ToggleLabel, {TextColor3 = "Text"})
             local function SetPreviewEnabled(Value)
                 Preview.Enabled = Value == true
                 Library.ESPPreviewEnabled = Preview.Enabled
                 Library.Flags.UIESPPreview = Preview.Enabled
-                ToggleMark.Visible = Preview.Enabled
+                ToggleBox.BackgroundColor3 = CheckboxColor()
                 Dirty = true
             end
-            PreviewToggle.Activated:Connect(function() SetPreviewEnabled(not Preview.Enabled) end)
+            Connections[#Connections + 1] = PreviewToggle.Activated:Connect(function() SetPreviewEnabled(not Preview.Enabled) end)
+            Connections[#Connections + 1] = PreviewToggle.MouseEnter:Connect(function()
+                Hovered = true; ToggleBox.BackgroundColor3 = CheckboxColor()
+            end)
+            Connections[#Connections + 1] = PreviewToggle.MouseLeave:Connect(function()
+                Hovered = false; ToggleBox.BackgroundColor3 = CheckboxColor()
+            end)
+            Library:BindMenuSounds(PreviewToggle)
             Library.SetFlags.UIESPPreview = SetPreviewEnabled
             Library.Flags.UIESPPreview = Preview.Enabled
             local Panel = New("Frame", Menu, {Name = "ESPPreview", Position = UDim2.new(1, 12, 0, 0),
@@ -21426,11 +21533,16 @@ end
         local TargetParts = {"UpperTorso", "Torso", "LowerTorso", "Head", "LeftUpperArm", "RightUpperArm",
             "LeftLowerArm", "RightLowerArm", "LeftHand", "RightHand", "LeftUpperLeg", "RightUpperLeg",
             "LeftLowerLeg", "RightLowerLeg", "LeftFoot", "RightFoot", "Left Arm", "Right Arm", "Left Leg", "Right Leg"}
+        local FixedTargetParts = {
+            Torso = {"UpperTorso", "Torso", "LowerTorso"},
+            UpperTorso = {"UpperTorso", "Torso"},
+            LowerTorso = {"LowerTorso", "Torso"},
+        }
         function C:GetTargetPart(Character, Camera, Origin, Center)
             local RandomHitbox = S.Bone == "Random hitbox"
             local Adaptive = S.Bone == "Closest to crosshair" or S.Bone == "Visible part (torso first)" or RandomHitbox
             local VisibleParts = S.Bone == "Visible part (torso first)"
-            local Names = Adaptive and TargetParts or {S.Bone, S.Bone == "UpperTorso" and "Torso" or S.Bone}
+            local Names = Adaptive and TargetParts or FixedTargetParts[S.Bone] or {S.Bone}
             local BestPart, BestScore = nil, S.FOV * S.FOV
             local BestPoint, Previous, Options, Weight = nil, nil, {}, 0
             local Allowed = {}
@@ -25347,7 +25459,7 @@ end
             LegitToggle("Show spread ring", "Spread", "LegitAimSpread")
             LegitToggle("Show FOV", "ShowFOV", "LegitAimShowFOV")
             LegitToggle("Include NPCs", "NPCs", "LegitAimNPCs")
-            LegitSection:Dropdown({Name = "Target bone", Flag = "LegitAimBone", Items = {"Head", "UpperTorso", "Closest to crosshair", "Random hitbox", "Visible part (torso first)"},
+            LegitSection:Dropdown({Name = "Target bone", Flag = "LegitAimBone", Items = {"Head", "Torso", "UpperTorso", "LowerTorso", "Closest to crosshair", "Random hitbox", "Visible part (torso first)"},
                 Default = Legit.Bone, Callback = function(Value) Legit.Bone = Value; CombatController.LegitController:Invalidate() end})
             LegitSection:Dropdown({Name = "Excluded hitboxes (closest mode)", Flag = "LegitAimExcludedHitboxes", Multi = true,
                 Items = {"Head", "Torso", "Arms", "Legs"}, Default = Legit.ExcludedHitboxes,
