@@ -17704,7 +17704,19 @@ end
         UpdateCard(Card, Record)
         return Card
     end
-    RefreshServers = function()
+    do
+    local ReadIdentity = getthreadidentity or getidentity
+    local WriteIdentity = setthreadidentity or setidentity
+    local RefreshBusy, RetryAfter, LastWarning = false, 0, -math.huge
+    local function ReportRefreshError(Message)
+        Library.LastCallbackError = Message
+        RetryAfter = os.clock() + 5
+        if os.clock() - LastWarning >= 15 then
+            LastWarning = os.clock()
+            warn("[Cinnamon] Server browser refresh failed: " .. tostring(Message))
+        end
+    end
+    local function RenderServers()
         if not Alive then return end
         ServerFolder = ReplicatedStorage:FindFirstChild("Servers")
         local Candidates, Seen = {}, {}
@@ -17755,6 +17767,31 @@ end
         JoinSelected.TextTransparency = SelectedServer and 0 or 0.5
         ServerStatus.Text = SelectedServer and string.format("%d servers | Selected: %s", #Candidates, tostring(ReadAttribute(SelectedServer, "MapName", SelectedServer.Name)))
             or (#Candidates > 0 and string.format("%d servers | Select a card, then Join selected", #Candidates) or "No matching servers - try All types or All maps")
+    end
+    RefreshServers = function()
+        if not Alive or RefreshBusy or os.clock() < RetryAfter then return end
+        RefreshBusy = true
+        local PreviousIdentity
+        if type(ReadIdentity) == "function" and type(WriteIdentity) == "function" then
+            local OK, Identity = pcall(ReadIdentity)
+            if OK then PreviousIdentity = Identity end
+            -- Data-model signals may inherit a game thread's capabilities.
+            -- Refresh CoreGui using the executor UI context, not that inherited identity.
+            local Restored, RestoreError = pcall(WriteIdentity, 8)
+            if not Restored then
+                RefreshBusy = false
+                ReportRefreshError(RestoreError)
+                return
+            end
+        end
+        local OK, Result = pcall(RenderServers)
+        if PreviousIdentity ~= nil then
+            local Restored, RestoreError = pcall(WriteIdentity, PreviousIdentity)
+            if not Restored then OK, Result = false, RestoreError end
+        end
+        RefreshBusy = false
+        if not OK then ReportRefreshError(Result) end
+    end
     end
     local RefreshQueued = false
     QueueServerRefresh = function()
