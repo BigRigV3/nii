@@ -1483,11 +1483,23 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
         do
             local ReadIdentity = getthreadidentity or getidentity
             local WriteIdentity = setthreadidentity or setidentity
+            local CallbackIdentity
+            if type(ReadIdentity) == "function" and type(WriteIdentity) == "function" then
+                local OK, Value = pcall(ReadIdentity)
+                if OK then CallbackIdentity = Value end
+            end
             Library.SafeCall = function(self, Function, ...)
                 local Identity
                 if type(ReadIdentity) == "function" and type(WriteIdentity) == "function" then
                     local OK, Value = pcall(ReadIdentity)
                     if OK then Identity = Value end
+                end
+                if Identity ~= nil and CallbackIdentity ~= nil and Identity ~= CallbackIdentity then
+                    local OK, Result = pcall(WriteIdentity, CallbackIdentity)
+                    if not OK then
+                        self.LastCallbackError = Result
+                        return false, Result
+                    end
                 end
                 local Success, Result = pcall(Function, ...)
                 -- Game callbacks can change the thread context used by subsequent UI updates.
@@ -1521,7 +1533,15 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 Connection = nil
             }
 
-            NewConnection.Connection = ConnectScheduled(Event, Callback, Interval)
+            local LastWarning = -math.huge
+            NewConnection.Connection = ConnectScheduled(Event, function(...)
+                if self.Unloaded then return end
+                local OK, Result = self:SafeCall(Callback, ...)
+                if not OK and os.clock() - LastWarning >= 15 then
+                    LastWarning = os.clock()
+                    warn("[Cinnamon] " .. Name .. " callback failed: " .. tostring(Result))
+                end
+            end, Interval)
 
             TableInsert(self.Connections, NewConnection)
             return NewConnection
@@ -6730,6 +6750,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     local Siblings = Selected.ParentPage and Selected.ParentPage.SubPages or Window.Pages
                     for _, Sibling in ipairs(Siblings) do Sibling:Turn(Sibling == Selected) end
                 end
+                if Page.SectionNavigation then Page.SectionNavigation:Reveal(Element) end
                 SearchVersion += 1
                 SearchResults.Instance.Visible = false
                 Items["Input"].Instance.Text = ""
@@ -7252,6 +7273,147 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             return Playerlist
         end
 
+        Library.SectionNavigationGroups = {
+            ["Hit sounds"] = "Hit feedback", ["Kill sounds"] = "Hit feedback",
+            ["Hitmarkers"] = "Hit feedback", ["Hit screen effect"] = "Hit feedback", ["Hit logs"] = "Hit feedback",
+            ["Crosshair"] = "HUD", ["Game UI colors"] = "HUD",
+            ["Watermark"] = "HUD", ["Keybind list"] = "HUD", ["Status window"] = "HUD",
+            ["Boss tracker"] = "HUD", ["Inventory viewer"] = "HUD",
+            ["Movement"] = "Movement", ["Movement speed"] = "Movement", ["Blink"] = "Movement", ["Noclip"] = "Movement",
+            ["Freecam"] = "Movement",
+            ["Protection"] = "Utilities", ["Staff detector"] = "Utilities",
+            ["Interaction range"] = "Utilities", ["Inventory"] = "Utilities", ["Last death waypoint"] = "Utilities",
+            ["Viewmodel"] = "Appearance", ["Custom avatar"] = "Appearance", ["Weapon sounds"] = "Appearance",
+            ["Viewmodel position"] = "Appearance", ["Weapon chams"] = "Appearance", ["Arms chams"] = "Appearance",
+            ["Third person"] = "Appearance",
+            ["Ambient lighting"] = "Lighting", ["Fog color"] = "Lighting", ["Skybox"] = "Lighting",
+            ["Custom weather"] = "Environment", ["Removals"] = "Environment", ["Vegetation appearance"] = "Environment",
+            ["Server position"] = "Position", ["Fake lag"] = "Position", ["Underground"] = "Position",
+            ["Fake yaw"] = "Position", ["Fake pitch"] = "Position",
+            ["ESP"] = "Appearance", ["ESP box"] = "Appearance", ["ESP flags & health"] = "Appearance",
+            ["Sound ESP"] = "Appearance",
+            ["NPCs and bosses"] = "NPCs & vehicles", ["BTR"] = "NPCs & vehicles", ["Mi-24V"] = "NPCs & vehicles",
+            ["Dead bodies"] = "World markers", ["Airdrops"] = "World markers", ["Quest items"] = "World markers",
+            ["Extractions"] = "World markers",
+            ["Silent aimbot"] = "Aim", ["Target selection"] = "Aim", ["All FOV circles"] = "Aim",
+            ["Rage bot"] = "Advanced", ["Manipulation"] = "Advanced", ["Mi-24V targeting"] = "Advanced",
+            ["Aim guide"] = "Aim assist", ["Aim movement"] = "Aim assist", ["Triggerbot"] = "Aim assist",
+            ["Desync resolver"] = "Resolver", ["Underground resolver"] = "Resolver",
+            ["Weapon mods"] = "Weapon", ["Ammo & reload"] = "Weapon",
+            ["Player material changer"] = "Materials", ["Enemy effects & halo"] = "Materials",
+            ["Streamproof mode"] = "Menu", ["Settings"] = "Menu", ["Menu sounds"] = "Menu",
+            ["Skin changer"] = "Skins", ["Choose a skin"] = "Skins",
+            ["Quest helper"] = "Quests", ["Quest actions"] = "Quests",
+            ["Auto loot"] = "Loot", ["Items to loot"] = "Loot",
+            ["Stash sort"] = "Sorting", ["Gear type order"] = "Sorting", ["Sort preview"] = "Sorting",
+        }
+        function Library:AddSectionNavigation(Page, Section)
+            Section.NavigationGroup = Library.SectionNavigationGroups[Section.Name] or Section.Name
+            local Navigation = Page.SectionNavigation
+            if not Navigation then
+                Navigation = {Sections = {}, Buttons = {}, Groups = {}, GroupCount = 0, Selected = nil}
+                Page.SectionNavigation = Navigation
+                function Navigation:Select(Selected)
+                    self.Selected = Selected
+                    Library:CloseOpenFrames()
+                    for _, Entry in ipairs(self.Sections) do
+                        Entry.Items.Section.Instance.Visible = Selected == nil or Entry.NavigationGroup == Selected
+                    end
+                    for _, Entry in ipairs(self.Buttons) do
+                        local Active = Entry.Section == Selected
+                        Entry.Button:Tween(nil, {BackgroundTransparency = Active and 0 or 1})
+                        Entry.Stroke:Tween(nil, {Transparency = Active and 0 or 1})
+                        Entry.Liner:Tween(nil, {BackgroundTransparency = Active and 0 or 1})
+                        Entry.Glow:Tween(nil, {BackgroundTransparency = Active and 0 or 1})
+                    end
+                    for _, Column in ipairs(Page.ColumnsData) do Column.Instance.CanvasPosition = Vector2New() end
+                end
+                function Navigation:Reveal(Element)
+                    for _, Entry in ipairs(self.Sections) do
+                        local Frame = Entry.Items.Section.Instance
+                        if Element == Frame or Element:IsDescendantOf(Frame) then
+                            self:Select(Entry.NavigationGroup)
+                            return
+                        end
+                    end
+                end
+            end
+            TableInsert(Navigation.Sections, Section)
+            if not Navigation.Groups[Section.NavigationGroup] then
+                Navigation.Groups[Section.NavigationGroup] = true
+                Navigation.GroupCount += 1
+            end
+            if Navigation.GroupCount < 2 then return end
+            if not Navigation.Bar then
+                local Root = Page.Items.Page.Instance
+                local Layout = Root:FindFirstChildOfClass("UIListLayout")
+                local Content = Instances:Create("Frame", {Parent = Root, Name = "SectionContent",
+                    BackgroundTransparency = 1, BorderSizePixel = 0,
+                    Position = UDim2New(0, 0, 0, 40), Size = UDim2New(1, 0, 1, -40)})
+                if Layout then Layout.Parent = Content.Instance end
+                for _, Column in ipairs(Page.ColumnsData) do Column.Instance.Parent = Content.Instance end
+                Navigation.Bar = Instances:Create("ScrollingFrame", {Parent = Root, Name = "SectionTabs",
+                    Size = UDim2New(1, 0, 0, 28), BackgroundColor3 = Library.Theme.Background,
+                    BorderSizePixel = 0, AutomaticCanvasSize = Enum.AutomaticSize.X,
+                    CanvasSize = UDim2New(), ScrollingDirection = Enum.ScrollingDirection.X,
+                    ScrollBarThickness = 2, ScrollBarImageColor3 = Library.Theme.Accent})
+                Navigation.Bar:AddToTheme({BackgroundColor3 = "Background", ScrollBarImageColor3 = "Accent"})
+                Navigation.Bar:Border("Outline")
+                Instances:Create("UIPadding", {Parent = Navigation.Bar.Instance,
+                    PaddingLeft = UDimNew(0, 7), PaddingRight = UDimNew(0, 7)})
+                Instances:Create("UIListLayout", {Parent = Navigation.Bar.Instance,
+                    FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center,
+                    Padding = UDimNew(0, 8), SortOrder = Enum.SortOrder.LayoutOrder})
+                function Navigation:AddButton(Name, Target)
+                    for _, Entry in ipairs(self.Buttons) do
+                        if Entry.Section == Target then return end
+                    end
+                    local Button = Instances:Create("TextButton", {Parent = self.Bar.Instance, Text = "",
+                        FontFace = Library.Font, TextSize = 9, AutomaticSize = Enum.AutomaticSize.X,
+                        Size = UDim2New(0, 0, 0, 20), AutoButtonColor = false,
+                        BorderSizePixel = 2, BackgroundTransparency = 1,
+                        BackgroundColor3 = Library.Theme["Page Background"], BorderColor3 = Library.Theme.Border})
+                    Button:AddToTheme({BackgroundColor3 = "Page Background", BorderColor3 = "Border"})
+                    Instances:Create("UIPadding", {Parent = Button.Instance,
+                        PaddingTop = UDimNew(0, 2), PaddingBottom = UDimNew(0, 2),
+                        PaddingLeft = UDimNew(0, 12), PaddingRight = UDimNew(0, 12)})
+                    local Stroke = Button:Border("Outline")
+                    Stroke.Instance.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+                    Stroke.Instance.Transparency = 1
+                    local Glow = Instances:Create("Frame", {Parent = Button.Instance,
+                        Position = UDim2New(0, -12, 0, -2),
+                        Size = UDim2New(0, 20, 1, 2), BorderSizePixel = 0,
+                        BackgroundColor3 = Library.Theme.Accent, BackgroundTransparency = 1})
+                    Glow:AddToTheme({BackgroundColor3 = "Accent"})
+                    Instances:Create("UIGradient", {Parent = Glow.Instance, Transparency = NumSequence{
+                        NumSequenceKeypoint(0, 0), NumSequenceKeypoint(0.193, 0.86875),
+                        NumSequenceKeypoint(0.504, 0.96875), NumSequenceKeypoint(1, 1)}})
+                    local Liner = Instances:Create("Frame", {Parent = Button.Instance,
+                        Position = UDim2New(0, -12, 0, -2),
+                        Size = UDim2New(0, 1, 1, 2), BorderSizePixel = 0,
+                        BackgroundColor3 = Library.Theme.Accent, BackgroundTransparency = 1})
+                    Liner:AddToTheme({BackgroundColor3 = "Accent"})
+                    local Label = Instances:Create("TextLabel", {Parent = Button.Instance, Text = Name,
+                        FontFace = Library.Font, TextSize = 9, BackgroundTransparency = 1,
+                        BorderSizePixel = 0, AutomaticSize = Enum.AutomaticSize.X,
+                        AnchorPoint = Vector2New(0.5, 0.5), Position = UDim2New(0.5, 0, 0.5, 0),
+                        Size = UDim2New(0, 0, 0, 15), TextColor3 = Library.Theme.Text})
+                    Label:AddToTheme({TextColor3 = "Text"})
+                    Instances:Create("UIPadding", {Parent = Label.Instance,
+                        PaddingLeft = UDimNew(0, 8), PaddingRight = UDimNew(0, 8)})
+                    Label:TextBorder()
+                    Button:Connect("Activated", function() self:Select(Target) end)
+                    TableInsert(self.Buttons, {Button = Button, Section = Target,
+                        Stroke = Stroke, Liner = Liner, Glow = Glow})
+                end
+                Navigation:AddButton("All", nil)
+                for _, Entry in ipairs(Navigation.Sections) do Navigation:AddButton(Entry.NavigationGroup, Entry.NavigationGroup) end
+            else
+                Navigation:AddButton(Section.NavigationGroup, Section.NavigationGroup)
+            end
+            Navigation:Select(Navigation.Selected)
+        end
+
         Library.Pages.Section = function(self, Data)
             Data = Data or { }
 
@@ -7355,6 +7517,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 TableInsert(SearchEntries, {Name = Section.Name, Kind = "Section", Element = Items["Section"]})
             end
 
+            Library:AddSectionNavigation(self, Section)
             Library:RegisterLayoutItem("Section", Section, Items["Section"].Instance, Items["Section"].Instance,
                 Items["Section"].Instance.Parent, Section.Window, Section.Name)
             return setmetatable(Section, Library.Sections)
@@ -15096,7 +15259,9 @@ local function BuildEffectsMenu(E, UIPage, LightingPage, WorldDetailPage, LocalP
     Slider(ThirdPerson, "Distance", "ThirdPersonDistance", P, "Distance", 3, 25, 0.5, " studs")
     Slider(ThirdPerson, "Shoulder offset", "ThirdPersonShoulder", P, "Shoulder", 0, 3, 0.1)
     for Index, Name in ipairs({"Hit", "Kill", "Shoot"}) do
-        local Section = PlayerPage:Section({Name = Name == "Shoot" and "Weapon sounds" or Name .. " sounds", Side = 2})
+        local SoundPage = Name == "Shoot" and PlayerPage or UIPage
+        local Section = SoundPage:Section({Name = Name == "Shoot" and "Weapon sounds" or Name .. " sounds",
+            Side = Name == "Shoot" and 2 or 1})
         local Sound = E.Sounds[Name]
         Toggle(Section, "Enabled", Name .. "SoundEnabled", Sound, "Enabled")
         if Name == "Hit" or Name == "Kill" then
@@ -20096,7 +20261,7 @@ return function(Library, Page, Effects, UnloadCallbacks)
         end)
     end
     local Connections = {}
-    local function Connect(Signal, Callback) Connections[#Connections + 1] = Signal:Connect(Callback) end
+    local function Connect(Signal, Callback) Connections[#Connections + 1] = Library:Connect(Signal, Callback).Connection end
     Connect(Input.InputBegan, function(Key, Processed)
         if Key.KeyCode == Enum.KeyCode.Escape then Close(); StopDance(); return end
         if S.Open and (Key.UserInputType == Enum.UserInputType.MouseButton1 or Key.UserInputType == Enum.UserInputType.Touch) then
@@ -22110,8 +22275,8 @@ end
             Section:Slider({Name = "Clip speed", Flag = "NoclipSpeed", Min = 0.5, Max = 8,
                 Default = 2, Decimals = 0.5, Suffix = " studs/s",
                 Callback = function(Value) Settings.Speed = Value end})
-            local Removing = Player.CharacterRemoving:Connect(Reset)
-            local Focus = Input.WindowFocusReleased:Connect(Reset)
+            local Removing = Library:Connect(Player.CharacterRemoving, Reset).Connection
+            local Focus = Library:Connect(Input.WindowFocusReleased, Reset).Connection
             UnloadCallbacks[#UnloadCallbacks + 1] = function()
                 Alive = false
                 UpdateConnection.Connection:Disconnect()
@@ -22490,12 +22655,17 @@ return function(Library, E, Combat, UnloadCallbacks, NPCController)
         Size = Heal and Heal.Size or UDim2.fromScale(1.1, 1.1), Position = Heal and Heal.Position or UDim2.fromScale(-0.05, -0.05),
         ScaleType = Enum.ScaleType.Stretch, Visible = false, ZIndex = 1})
     local Expires, Started, Duration = 0, 0, 0
-    function E:FlashHitEffect()
-        if not self.Active or not self.HitEffect.Enabled then return end
-        Started, Duration = os.clock(), math.max(0.1, self.HitEffect.Duration)
-        Expires = Started + Duration
-        Border.ImageColor3 = self.HitEffect.Color
+    local function ShowHitEffect()
+        Border.ImageColor3 = E.HitEffect.Color
         Border.ImageTransparency, Border.Visible = 0.35, true
+        Started, Duration = os.clock(), math.max(0.1, E.HitEffect.Duration)
+        Expires = Started + Duration
+    end
+    function E:FlashHitEffect()
+        if Library.Unloaded or not self.Active or not self.HitEffect.Enabled then return end
+        -- HealthChanged can arrive in a game thread without access to the overlay.
+        -- SafeCall restores the UI context and retains any error without console spam.
+        return Library:SafeCall(ShowHitEffect)
     end
     local ThemeObjects = {}
     local function Theme(Object, Properties)
