@@ -202,8 +202,9 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 ["primordial"] = {"primordial.wav", "https://raw.githubusercontent.com/BigRigV3/Cinnamon/main/primordial.wav"},
                 ["rust_headshot"] = {"rust_headshot.wav", "https://raw.githubusercontent.com/BigRigV3/Cinnamon/main/rust_headshot.wav"},
                 ["tf_crit"] = {"tf_crit.wav", "https://raw.githubusercontent.com/BigRigV3/Cinnamon/main/tf_crit.wav"},
+                ["sparkle"] = {"sparkle.wav", "https://raw.githubusercontent.com/BigRigV3/Cinnamon/refs/heads/main/sparkle.wav"},
             },
-            HitsoundNames = {"animezing", "applepay", "fortnite-dead", "minecraft_hit-critical", "minecraft_xp-gain", "neverlose (1)", "neverlose", "primordial", "rust_headshot", "tf_crit"},
+            HitsoundNames = {"animezing", "applepay", "fortnite-dead", "minecraft_hit-critical", "minecraft_xp-gain", "neverlose (1)", "neverlose", "primordial", "rust_headshot", "tf_crit", "sparkle"},
             MenuSoundAssets = {
                 Hover = {"Hover.mp3", "https://raw.githubusercontent.com/BigRigV3/Cinnamon/main/assets/MenuHover.mp3"},
                 Click = {"Click.mp3", "https://raw.githubusercontent.com/BigRigV3/Cinnamon/main/assets/MenuClick.mp3"},
@@ -1232,6 +1233,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 local Changed = self.Font ~= Face
                 self.Font, self.MenuFontName = Face, Name
                 local function Apply(Item)
+                    if Item:GetAttribute("CinnamonPreserveFont") then return end
                     if Item:IsA("TextLabel") or Item:IsA("TextButton") or Item:IsA("TextBox") then
                         Item.FontFace = self.Font
                     end
@@ -5921,6 +5923,19 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         Icon.BackgroundTransparency = 1
                         Icon.Image = Entry.Image or ""
                         Icon.ScaleType = Enum.ScaleType.Fit
+                        local Amount = tonumber(Entry.Amount) or 1
+                        if Amount > 1 then
+                            local Stack = Label(Icon, "x" .. tostring(Amount),
+                                UDim2.new(1, -6, 0, 18), UDim2.new(0, 3, 1, -3))
+                            Stack.Name = "StackAmount"
+                            Stack:SetAttribute("CinnamonPreserveFont", true)
+                            Stack.FontFace = Font.fromEnum(Enum.Font.FredokaOne)
+                            Stack.AnchorPoint = Vector2.new(0, 1)
+                            Stack.TextSize = math.clamp(math.floor(Viewer.IconSize * 0.28), 12, 18)
+                            Stack.TextColor3 = Color3.new(1, 1, 1)
+                            Stack.TextYAlignment = Enum.TextYAlignment.Bottom
+                            Stack.ZIndex = Icon.ZIndex + 1
+                        end
                     if Entry.Caption then
                         local Caption = Label(Content, Entry.Caption, UDim2.fromOffset(CellWidth, 40), UDim2.fromOffset(X, Y + Viewer.IconSize + 2))
                         Caption.TextWrapped, Caption.TextSize, Caption.TextXAlignment = true, 9, Enum.TextXAlignment.Center
@@ -8814,6 +8829,19 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         Icon.BackgroundTransparency = 1
                         Icon.Image = Entry.Image or ""
                         Icon.ScaleType = Enum.ScaleType.Fit
+                        local Amount = tonumber(Entry.Amount) or 1
+                        if Amount > 1 then
+                            local Stack = Label(Icon, "x" .. tostring(Amount),
+                                UDim2.new(1, -6, 0, 18), UDim2.new(0, 3, 1, -3))
+                            Stack.Name = "StackAmount"
+                            Stack:SetAttribute("CinnamonPreserveFont", true)
+                            Stack.FontFace = Font.fromEnum(Enum.Font.FredokaOne)
+                            Stack.AnchorPoint = Vector2.new(0, 1)
+                            Stack.TextSize = math.clamp(math.floor(Viewer.IconSize * 0.28), 12, 18)
+                            Stack.TextColor3 = Color3.new(1, 1, 1)
+                            Stack.TextYAlignment = Enum.TextYAlignment.Bottom
+                            Stack.ZIndex = Icon.ZIndex + 1
+                        end
                     if Entry.Caption then
                         local Caption = Label(Content, Entry.Caption, UDim2.fromOffset(CellWidth, 40), UDim2.fromOffset(X, Y + Viewer.IconSize + 2))
                         Caption.TextWrapped, Caption.TextSize, Caption.TextXAlignment = true, 9, Enum.TextXAlignment.Center
@@ -8945,6 +8973,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
 
     local ESP = {
         Enabled = false,
+        ForceRender = false,
         TeamCheck = false,
         NPCsEnabled = false,
         NPCMaxDistance = 200,
@@ -9138,10 +9167,34 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
         return Connection
     end
 
+    local ForceRenderWorker, NextForceRender, ForceRenderIndex = nil, 0, 0
+    ESP:ConnectRender(function()
+        if not ESP.Enabled or not ESP.ForceRender or not Workspace.StreamingEnabled
+            or ForceRenderWorker or os.clock() < NextForceRender then return end
+        NextForceRender = os.clock() + 2
+        local Positions = {}
+        for Actor in pairs(Entries) do
+            local Character = Actor.Character
+            local Root = Character and (Character:FindFirstChild("HumanoidRootPart") or Character.PrimaryPart)
+            if Root and (typeof(Actor) == "Instance" or ESP.NPCsEnabled) then
+                Positions[#Positions + 1] = Root.Position
+            end
+        end
+        if #Positions == 0 then return end
+        ForceRenderIndex = ForceRenderIndex % #Positions + 1
+        local Position = Positions[ForceRenderIndex]
+        ForceRenderWorker = task.defer(function()
+            local OK, Error = pcall(Players.LocalPlayer.RequestStreamAroundAsync, Players.LocalPlayer, Position, 1)
+            if not OK then ESP.LastStreamError = tostring(Error) end
+            ForceRenderWorker = nil
+        end)
+    end)
+
     function ESP:Unload()
         if Unloaded then return end
         Unloaded = true
         self.Enabled = false
+        if ForceRenderWorker then pcall(task.cancel, ForceRenderWorker); ForceRenderWorker = nil end
         table.clear(NPCAdapters)
         table.clear(AimPlayers)
         AimPlayersDirty = true
@@ -9300,7 +9353,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
         end     
          
         function Functions:FadeOutOnDist(element, distance)
-            local transparency = math.max(0.1, 1 - (distance / ESP.MaxDistance))
+            local transparency = ESP.ForceRender and 1 or math.max(0.1, 1 - (distance / ESP.MaxDistance))
             if element:IsA("TextLabel") then
                 element.TextTransparency = 1 - transparency
             elseif element:IsA("ImageLabel") then
@@ -9467,8 +9520,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         Set(HiddenChams, "Enabled", false)
                         return
                     end
-                    local OcclusionActive = Settings.Occlusion and OnScreen and Dist <= Settings.OcclusionMaxDistance
-                    local RegularActive = Settings.Enabled and OnScreen and Dist <= (IsNPC and ESP.NPCMaxDistance or ESP.MaxDistance)
+                    local OcclusionActive = Settings.Occlusion and OnScreen and (ESP.ForceRender or Dist <= Settings.OcclusionMaxDistance)
+                    local RegularActive = Settings.Enabled and OnScreen and (ESP.ForceRender or Dist <= (IsNPC and ESP.NPCMaxDistance or ESP.MaxDistance))
                     if OcclusionActive then EnsureOcclusion(plr.Character)
                     elseif OcclusionModel then DestroyOcclusion() end
                     Set(Chams, "Adornee", plr.Character)
@@ -9567,7 +9620,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         local Dist = (Cam.CFrame.Position - HRP.Position).Magnitude / GameUnitsPerMeter
                         UpdateChams(Dist, OnScreen)
                         local boundsCenter, w, h
-                        if OnScreen and Dist <= (IsNPC and ESP.NPCMaxDistance or ESP.MaxDistance) then
+                        if OnScreen and (ESP.ForceRender or Dist <= (IsNPC and ESP.NPCMaxDistance or ESP.MaxDistance)) then
                             boundsCenter, w, h = Functions:GetCharacterScreenBounds(plr.Character)
                         end
                         
@@ -9577,7 +9630,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                              
                             if not ESP.TeamCheck or not lplayer.Team or plr.Team ~= lplayer.Team then
                                 Hidden = false
-                                local Alpha = ESP.FadeOut.OnDistance and math.clamp(Dist / ESP.MaxDistance, 0, 0.9) or 0
+                                local Alpha = not ESP.ForceRender and ESP.FadeOut.OnDistance and math.clamp(Dist / ESP.MaxDistance, 0, 0.9) or 0
                                 for _, Label in ipairs(Labels) do
                                     if LabelSize ~= ESP.FontSize then Set(Label, "TextSize", ESP.FontSize) end
                                     if LabelFont ~= ESP.FontFace then Set(Label, "FontFace", ESP.FontFace) end
@@ -10231,7 +10284,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             Aim = {Enabled = false, Held = false, HitChance = 100, FOV = 150, FOVOrigin = "Screen center", ShowFOV = false,
                 Snaplines = false, VisCheck = true, FriendlyCheck = false, Lead = true, Players = true, NPCs = true, Helicopters = false, Bone = "Head", Priority = "Closest visible to crosshair", Distance = 1000},
             Mods = {Spread = false, SpreadAmount = 0, Recoil = false, RecoilAmount = 0,
-                ForceHeadshots = true, HSRTargeting = false, InstantBullet = false,
+                ForceHeadshots = true, HSRTargeting = false, InstantBullet = false, InstantHit = false,
                 NoSway = false, NoBobbing = false,
                 FullAuto = false, NoObstruction = false, InstantAim = false, InstantEquip = false, KeepEquipAnimation = false,
                 SprintShooting = false, AutoFill = false, PacketReload = false, HotSwapReload = false},
@@ -10258,6 +10311,121 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
         local SetUpvalue = setupvalue or (debug and debug.setupvalue)
         local AmmoSource, AmmoConnection, LastServerAmmo
         local NIL = {}
+
+        -- Report signatures from the supplied legacy CharacterController script.
+        do
+            local State = {Blocked = 0, Codes = {}, Reporters = {}, Watchers = {}, Workers = {}}
+            Controller.AC = State
+            local SeenReporters = setmetatable({}, {__mode = "k"})
+            local SeenWatchers = setmetatable({}, {__mode = "k"})
+            local GetInfo = debug and debug.getinfo
+
+            local function Record(Code)
+                State.Blocked += 1
+                local Key = tostring(Code)
+                State.Codes[Key] = (State.Codes[Key] or 0) + 1
+            end
+
+            function Controller:IsACReport(Args)
+                if Args.n < 5 then return false end
+                local Kind = typeof(Args[2])
+                if Kind == "CFrame" then
+                    local Position = Args[2].Position
+                    return Position.X == 1 and Position.Y == 1 and Position.Z == 1
+                elseif Kind == "Vector3" then
+                    local Position = Args[2]
+                    return Position.X == -1 and Position.Y == -1 and Position.Z == -1
+                end
+                return false
+            end
+
+            function Controller:BlockACReport(Args)
+                if not self.Active or not self:IsACReport(Args) then return false end
+                Record(Args[3])
+                return true
+            end
+
+            function Controller:ArmAC(Character)
+                if not self.Active or not Character or Character ~= Player.Character then return end
+                if type(getgc) == "function" and type(hookfunction) == "function"
+                    and type(islclosure) == "function" and type(GetInfo) == "function"
+                    and type(GetUpvalues) == "function" then
+                    local OK, Objects = pcall(getgc, false)
+                    if OK and type(Objects) == "table" then
+                        for _, Candidate in ipairs(Objects) do
+                            pcall(function()
+                                if type(Candidate) ~= "function" or SeenReporters[Candidate]
+                                    or not islclosure(Candidate)
+                                    or (type(isexecutorclosure) == "function" and isexecutorclosure(Candidate)) then return end
+                                local Info = GetInfo(Candidate)
+                                if not Info or type(Info.source) ~= "string"
+                                    or not Info.source:find("CharacterController", 1, true) then return end
+                                local Values = GetUpvalues(Candidate)
+                                if type(Values) ~= "table" or Values[1] ~= Character or Values[2] ~= Players
+                                    or Values[3] ~= Player or Values[4] ~= ProjectileInflict then return end
+                                local Entry = {Target = Candidate}
+                                Entry.Wrapper = function(...)
+                                    if Controller.Active then Record((...)); return end
+                                    return Entry.Original(...)
+                                end
+                                Entry.Original = hookfunction(Candidate, Entry.Wrapper)
+                                SeenReporters[Candidate] = true
+                                State.Reporters[#State.Reporters + 1] = Entry
+                            end)
+                        end
+                    end
+                end
+                if type(getconnections) == "function" and type(GetUpvalues) == "function" then
+                    local OK, Watchers = pcall(function()
+                        return getconnections(game:GetService("LogService").MessageOut)
+                    end)
+                    if OK and type(Watchers) == "table" then
+                        for _, Connection in ipairs(Watchers) do
+                            pcall(function()
+                                local Callback = Connection.Function
+                                if type(Callback) ~= "function" or SeenWatchers[Callback]
+                                    or Connection.Enabled ~= true or type(Connection.Disable) ~= "function"
+                                    or type(Connection.Enable) ~= "function" then return end
+                                local Values = GetUpvalues(Callback)
+                                local Tags = type(Values) == "table" and Values[1]
+                                if type(Tags) ~= "table" or rawget(Tags, 1) ~= "[ESP]"
+                                    or rawget(Tags, 2) ~= "[AIMBOT]" then return end
+                                Connection:Disable()
+                                SeenWatchers[Callback] = true
+                                State.Watchers[#State.Watchers + 1] = Connection
+                            end)
+                        end
+                    end
+                end
+            end
+
+            function Controller:QueueAC(Character)
+                if not Character then return end
+                local Worker = task.defer(function()
+                    -- Allow character scripts time to create their reporter closures.
+                    for Attempt = 1, 4 do
+                        if not self.Active or Player.Character ~= Character then return end
+                        self:ArmAC(Character)
+                        if Attempt < 4 then task.wait(0.5) end
+                    end
+                end)
+                State.Workers[#State.Workers + 1] = Worker
+            end
+
+            function Controller:StopAC()
+                for _, Worker in ipairs(State.Workers) do pcall(task.cancel, Worker) end
+                for Index = #State.Reporters, 1, -1 do
+                    local Entry = State.Reporters[Index]
+                    pcall(hookfunction, Entry.Target, Entry.Original)
+                end
+                for _, Connection in ipairs(State.Watchers) do
+                    pcall(function() Connection:Enable() end)
+                end
+                table.clear(State.Workers)
+                table.clear(State.Reporters)
+                table.clear(State.Watchers)
+            end
+        end
     
         local function Data()
             if Test.Data then return Test.Data end
@@ -10357,15 +10525,22 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             local Combat = Gameplay and Gameplay:FindFirstChild("Combat")
             local Kills = Statistics and tonumber(Statistics:GetAttribute("K_PVP"))
             local Deaths = Statistics and tonumber(Statistics:GetAttribute("D_PVP"))
-            local Headshots = Combat and tonumber(Combat:GetAttribute("Headshots"))
-            local Bodyshots = Combat and tonumber(Combat:GetAttribute("Bodyshots"))
-            local KDR = Kills and Deaths and (Deaths > 0 and Kills / Deaths or Kills) or nil
-            local HSR
-            if Headshots and Bodyshots and Headshots >= 0 and Bodyshots >= 0 then
-                local Total = Headshots + Bodyshots
-                HSR = Total > 0 and math.ceil(Headshots / Total * 100) / 100 or 0
+            -- The supplied HSR logic prefers Journey counters, falling back to Combat.
+            local function HasCounters(Candidate)
+                return Candidate and (Candidate:GetAttribute("Headshots") ~= nil
+                    or Candidate:GetAttribute("Bodyshots") ~= nil)
             end
-            self.KDR, self.HSR = KDR, HSR
+            local Counters = HasCounters(Statistics) and Statistics or HasCounters(Combat) and Combat
+            local KDR = Kills and Deaths and (Deaths > 0 and Kills / Deaths or Kills) or nil
+            local HSR, HSRPercent
+            if Counters then
+                local Headshots = tonumber(Counters:GetAttribute("Headshots")) or 0
+                local Bodyshots = tonumber(Counters:GetAttribute("Bodyshots")) or 0
+                local Total = Headshots + Bodyshots
+                HSRPercent = Total < 1 and 0 or math.ceil(Headshots / Total * 100)
+                HSR = HSRPercent / 100
+            end
+            self.KDR, self.HSR, self.HSRPercent = KDR, HSR, HSRPercent
             self.CombatRatiosNextUpdate = Now + 0.25
             return KDR, HSR
         end
@@ -10378,9 +10553,12 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             end
             local _, HSR = self:GetCombatRatios()
             if HSR == nil then self.HSRUseTorso = false; return false end
-            if self.HSRUseTorso then
-                if HSR <= 0.6 then self.HSRUseTorso = false end
-            elseif HSR >= 0.7 then self.HSRUseTorso = true end
+            -- Compare the rounded integer percentage exactly as the supplied script does.
+            if self.HSRPercent >= 70 then
+                self.HSRUseTorso = true
+            elseif self.HSRPercent <= 60 then
+                self.HSRUseTorso = false
+            end
             return self.HSRUseTorso == true
         end
 
@@ -10747,6 +10925,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             if not self.Active then return Origin, Direction end
             local Solution = self.ProjectileSolution
             local Enabled = Solution and ((Solution.Kind == "Hitscan" and self:IsHitscanActive())
+                or (Solution.InstantHit and self.Mods.InstantHit and self:IsAimActive())
                 or (Solution.Kind == "Magic Bullet" and self:IsMagicBulletActive())
                 or (Solution.Kind == "Autowall" and self:IsRageActive() and self.Rage.Wallbang))
             if Enabled and Solution.Part.Parent and ManipulationClock() - Solution.Created <= 2 then
@@ -11895,7 +12074,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                             Context.Origin, Context.Kind = Origin, Solution.Kind
                             Context.Manipulated = Solution.Kind ~= "Direct"
                             Controller.ProjectileSolution = {Origin = Origin, Part = Part, Kind = Solution.Kind,
-                                ForceHit = Solution.ForceHit, Created = ManipulationClock()}
+                                ForceHit = Solution.ForceHit or (Controller.Mods.InstantHit and SilentAllowed),
+                                InstantHit = Controller.Mods.InstantHit and SilentAllowed, Created = ManipulationClock()}
                         else
                             Controller.ProjectileSolution = nil
                             -- Silent aim may aim through cover when visibility filtering is disabled.
@@ -11911,7 +12091,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         or (not HelicopterTarget and Controller.Aim.Lead and Controller:IsAimActive()))
                         and (Controller:IsRageActive() or Controller:IsAimActive() or Controller:IsManipulationActive())
                     if Part and Origin and AimPart then
-                        if not Controller.Mods.InstantBullet and not Context.Manipulated then
+                        if not Controller.Mods.InstantBullet and not (Controller.Mods.InstantHit and SilentAllowed)
+                            and not Context.Manipulated then
                             local Speed = Context.Ammo and tonumber(ReadAttribute(Context.Ammo, "MuzzleVelocity"))
                             if Speed and Speed > 0 then
                                 local Velocity = UseTimeShot and Part.AssemblyLinearVelocity or Vector3.zero
@@ -11919,6 +12100,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                             end
                         end
                         Context.Part = Part
+                        Context.InstantHit = Controller.Mods.InstantHit and SilentAllowed
                         if Part.Name == "HumanoidRootPart" then
                             Context.Part = Part.Parent:FindFirstChild("UpperTorso") or Part.Parent:FindFirstChild("Torso")
                                 or Part.Parent:FindFirstChild("Head")
@@ -11956,6 +12138,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         and Method ~= "Create" and Method ~= "Play" and Method ~= "Resume" then
                         return NamecallOriginal(Remote, ...)
                     end
+                    if Method == "FireServer" and Remote == ProjectileInflict
+                        and Controller:BlockACReport(table.pack(...)) then return end
                     if Method == "FireServer" and Controller:ShouldBlockDamage(Remote, ...) then return end
                     if Method == "Raycast" and Remote == workspace
                         and (Controller.Mods.InstantBullet or Controller.ProjectileSolution)
@@ -11976,6 +12160,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     end
                     if Method == "GetAttribute" and BulletContext and Controller.HideLocalTracer
                         and (...) == "Tracer" and AmmoTypes and Remote.Parent == AmmoTypes then return false end
+                    if Method == "GetAttribute" and BulletContext and BulletContext.InstantHit
+                        and ((...) == "ProjectileDrop" or (...) == "Drag") then return 0 end
                     if Method == "GetAttribute" and (...) == "AccuracyDeviation"
                         and Controller.Mods.Spread and AmmoTypes and Remote.Parent == AmmoTypes then
                         local Attribute = ...
@@ -12010,6 +12196,9 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                         local Context = BulletContext
                         local Shot = Shots[Args[2]]
                         if Fire then
+                            if Context and Context.InstantHit and Context.Part and Context.Part.Parent and Context.Origin then
+                                Args[3] = tick() - (Context.Part.Position - Context.Origin).Magnitude / 1000
+                            end
                             Shot = {Id = Args[2], Created = os.clock(), Accepted = false,
                                 Part = Context and Context.Part, Origin = Context and Context.Origin,
                                 Manipulated = Context and Context.Manipulated == true, Kind = Context and Context.Kind,
@@ -12117,6 +12306,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
     
         function Controller:Stop()
             self.Active = false
+            self:StopAC()
             self:RestoreForceHitbox()
             self:RestoreManipulation()
             if not Testing then ContextActions:UnbindAction("CinnamonPacketReload") end
@@ -12151,6 +12341,10 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             table.insert(Connections, Players.PlayerAdded:Connect(WatchDamageOwner))
             for _, Owner in ipairs(Players:GetPlayers()) do WatchDamageOwner(Owner) end
             InstallHooks()
+            table.insert(Connections, Player.CharacterAdded:Connect(function(Character)
+                Controller:QueueAC(Character)
+            end))
+            Controller:QueueAC(Player.Character)
             table.insert(Connections, ConnectScheduled(RunService.Heartbeat, function()
                 Controller:UpdateForceHitbox()
             end, 1 / 30))
@@ -19513,7 +19707,7 @@ return function(Library, Page, Effects, UnloadCallbacks)
     local S = {Enabled = false, Open = false, Slots = {}, Speed = 1, Loop = true, CancelOnMove = true}
     local Alive, Revision, FontRevision = true, 0, 0
     local Track, DancingHumanoid, Started, HeldInput, SavedMouse, Selected
-    local DanceSound, TakeLSoundAsset
+    local DanceSound, TakeLSoundAsset, GriddySoundAsset, PopularSoundAsset
     local ResolvedAnimations = {}
     local function ResolveEmoteAnimation(Id)
         if ResolvedAnimations[Id] then return ResolvedAnimations[Id] end
@@ -19530,12 +19724,14 @@ return function(Library, Page, Effects, UnloadCallbacks)
         return Resolved
     end
     local TakeLId = "124573621747512"
+    local GriddyId = "77017926307035"
+    local PopularId = "71302743123422"
     local EmoteDefaults = {
         {Name = "Bill Bounce", Id = "82441853772985"},
         {Name = "Take the L", Id = TakeLId},
         {Name = "Floss", Id = "5917570207"},
-        {Name = "Popular", Id = "71302743123422"},
-        {Name = "Griddy", Id = "77017926307035"},
+        {Name = "Popular", Id = PopularId},
+        {Name = "Griddy", Id = GriddyId},
         
     }
     local WheelBind, Status
@@ -19557,6 +19753,16 @@ return function(Library, Page, Effects, UnloadCallbacks)
     local Wheel = New("Frame", {Parent = Overlay, AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(420, 420), BackgroundTransparency = 1})
     local Scale = New("UIScale", {Parent = Wheel})
+    local Backplate = New("Frame", {Parent = Wheel, AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(416, 416),
+        BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, ZIndex = 1})
+    New("UICorner", {Parent = Backplate, CornerRadius = UDim.new(1, 0)})
+    New("UIGradient", {Parent = Backplate, Rotation = 90, Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(39, 48, 68)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(17, 22, 35)),
+    })})
+    New("UIStroke", {Parent = Backplate, Color = Color3.fromRGB(112, 139, 178),
+        Transparency = 0.65, Thickness = 1.5})
     local function Text(Parent, Value, Position, Size, TextSize)
         local Label = New("TextLabel", {Parent = Parent, Text = Value, FontFace = WheelFont,
             Position = Position, Size = Size, BackgroundTransparency = 1,
@@ -19569,8 +19775,12 @@ return function(Library, Page, Effects, UnloadCallbacks)
     Text(Wheel, "ESC TO CANCEL", UDim2.fromOffset(60, 477), UDim2.fromOffset(300, 22), 16)
     local Center = New("Frame", {Parent = Wheel, AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(172, 172),
-        BackgroundColor3 = Background, BackgroundTransparency = 0.05, BorderSizePixel = 0, ZIndex = 2})
+        BackgroundColor3 = Background, BackgroundTransparency = 0, BorderSizePixel = 0, ZIndex = 3})
     New("UICorner", {Parent = Center, CornerRadius = UDim.new(1, 0)})
+    New("UIGradient", {Parent = Center, Rotation = 90,
+        Color = ColorSequence.new(Color3.fromRGB(31, 37, 53), Color3.fromRGB(17, 21, 33))})
+    New("UIStroke", {Parent = Center, Color = Color3.fromRGB(103, 128, 166),
+        Transparency = 0.6, Thickness = 1})
     local Title = Text(Center, "CHOOSE AN EMOTE", UDim2.fromOffset(16, 45), UDim2.fromOffset(140, 60), 24)
     local Hint = Text(Center, "Move your cursor", UDim2.fromOffset(12, 108), UDim2.fromOffset(148, 32), 15)
     for Index = 1, 6 do
@@ -19579,15 +19789,16 @@ return function(Library, Page, Effects, UnloadCallbacks)
         S.Slots[Index] = Slot
         local Sector = {Parts = {}}
         Sectors[Index] = Sector
-        -- Radial strips form six wedges without requiring a downloaded wheel texture.
-        for Slice = 1, 14 do
-            local Degrees = (Index - 1) * 60 - 28 + (Slice - 0.5) * 4
+        -- Opaque overlapping strips only draw the selected wedge. The continuous
+        -- backplate supplies the idle background without translucent overlap seams.
+        for Slice = 1, 30 do
+            local Degrees = (Index - 1) * 60 - 30 + (Slice - 0.5) * 2
             local Angle = math.rad(Degrees)
             Sector.Parts[Slice] = New("Frame", {Parent = Wheel,
                 AnchorPoint = Vector2.new(0.5, 0.5),
-                Position = UDim2.fromOffset(210 + math.sin(Angle) * 140, 210 - math.cos(Angle) * 140),
-                Size = UDim2.fromOffset(15, 100), Rotation = Degrees,
-                BorderSizePixel = 0, BackgroundColor3 = Background, BackgroundTransparency = 0.15})
+                Position = UDim2.fromOffset(210 + math.sin(Angle) * 143, 210 - math.cos(Angle) * 143),
+                Size = UDim2.fromOffset(8, 114), Rotation = Degrees, ZIndex = 2,
+                BorderSizePixel = 0, BackgroundColor3 = Blue, BackgroundTransparency = 0, Visible = false})
         end
         local Angle = math.rad((Index - 1) * 60)
         local X, Y = 210 + math.sin(Angle) * 140, 210 - math.cos(Angle) * 140
@@ -19618,7 +19829,7 @@ return function(Library, Page, Effects, UnloadCallbacks)
         Selected = Index
         for Number, Sector in ipairs(Sectors) do
             for _, Part in ipairs(Sector.Parts) do
-                Part.BackgroundColor3 = Number == Index and Blue or Background
+                Part.Visible = Number == Index
             end
         end
         local Slot = Index and S.Slots[Index]
@@ -19652,15 +19863,29 @@ return function(Library, Page, Effects, UnloadCallbacks)
         SetStatus("Loading " .. Slot.Name .. "...")
         task.spawn(function()
             local Music, MusicError
-            if Id == TakeLId then
+            if Id == TakeLId or Id == GriddyId or Id == PopularId then
                 local Ready, Result = pcall(function()
-                    if not TakeLSoundAsset then
-                        local Path = Library.Folders.Assets .. "/take-the-l-fortnite-emote-audiotrimmer.mp3"
-                        Library:EnsureAsset(Path,
-                            "https://raw.githubusercontent.com/BigRigV3/Cinnamon/main/take-the-l-fortnite-emote-audiotrimmer.mp3", "mp3")
-                        TakeLSoundAsset = getcustomasset(Path)
+                    if Id == TakeLId then
+                        if not TakeLSoundAsset then
+                            local Path = Library.Folders.Assets .. "/take-the-l-fortnite-emote-audiotrimmer.mp3"
+                            Library:EnsureAsset(Path,
+                                "https://raw.githubusercontent.com/BigRigV3/Cinnamon/main/take-the-l-fortnite-emote-audiotrimmer.mp3", "mp3")
+                            TakeLSoundAsset = getcustomasset(Path)
+                        end
+                        return TakeLSoundAsset
                     end
-                    return TakeLSoundAsset
+                    if Id == GriddyId and not GriddySoundAsset then
+                        local Path = Library.Folders.Assets .. "/griddy.mp3"
+                        Library:EnsureAsset(Path,
+                            "https://raw.githubusercontent.com/BigRigV3/Cinnamon/main/griddy.mp3", "mp3")
+                        GriddySoundAsset = getcustomasset(Path)
+                    elseif Id == PopularId and not PopularSoundAsset then
+                        local Path = Library.Folders.Assets .. "/popular-vibe.mp3"
+                        Library:EnsureAsset(Path,
+                            "https://raw.githubusercontent.com/BigRigV3/Cinnamon/main/popular-vibe.mp3", "mp3")
+                        PopularSoundAsset = getcustomasset(Path)
+                    end
+                    return Id == GriddyId and GriddySoundAsset or PopularSoundAsset
                 end)
                 if Ready then Music = Result else MusicError = tostring(Result) end
                 if not Alive or Revision ~= Version or not Available(FromMenu) or Humanoid() ~= H or Slot.Id ~= Id then return end
@@ -19691,7 +19916,9 @@ return function(Library, Page, Effects, UnloadCallbacks)
             end
             if Music then
                 local AudioOK, AudioError = pcall(function()
-                    DanceSound = New("Sound", {Name = "TakeTheLEmoteMusic", Parent = game:GetService("SoundService"),
+                    local SoundName = Id == GriddyId and "GriddyEmoteMusic"
+                        or Id == PopularId and "PopularEmoteMusic" or "TakeTheLEmoteMusic"
+                    DanceSound = New("Sound", {Name = SoundName, Parent = game:GetService("SoundService"),
                         SoundId = Music, Volume = 1, Looped = S.Loop, PlaybackSpeed = S.Speed})
                     DanceSound:Play()
                 end)
@@ -24412,12 +24639,14 @@ end
         local QuestItemESP = (function()
 return function(Library, ESP, UnloadCallbacks)
     local Player = game:GetService("Players").LocalPlayer
-    local S = {Enabled = false, Distance = true, MaxDistance = 2000, Color = Library.Theme.Accent}
+    local S = {Enabled = false, Distance = true, MaxDistance = 2000, ForceRender = false,
+        UnlimitedDistance = false, Color = Library.Theme.Accent}
     local Holder = Instance.new("ScreenGui")
     Holder.Name = "CinnamonQuestItemESP"
     Holder.IgnoreGuiInset, Holder.ResetOnSpawn, Holder.DisplayOrder = true, false, 1
     Holder.Parent = Library.Holder.Instance.Parent
     local Entries, Elapsed, WasActive = {}, 1, false
+    local StreamWorker, NextStream, StreamIndex = nil, 0, 0
     local Excluded = {key = true, keys = true, keycard = true, keycards = true,
         keychain = true, keychains = true, keyring = true, keyrings = true,
         dagger = true, daggers = true, compass = true, compasses = true,
@@ -24560,7 +24789,7 @@ return function(Library, ESP, UnloadCallbacks)
     end
     local Connection = ESP:ConnectRender(function(Delta)
         local Camera = workspace.CurrentCamera
-        if not S.Enabled or not ESP.Enabled or not Camera then
+        if not S.Enabled or (not ESP.Enabled and not S.ForceRender) or not Camera then
             if WasActive then
                 for _, Entry in pairs(Entries) do Entry.Label.Visible = false end
                 WasActive = false
@@ -24573,6 +24802,27 @@ return function(Library, ESP, UnloadCallbacks)
         if Elapsed >= 0.75 then Elapsed = 0; Refresh() end
         local Root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
         local Origin = Root and Root.Position or Camera.CFrame.Position
+        if S.ForceRender and workspace.StreamingEnabled and not StreamWorker and os.clock() >= NextStream then
+            NextStream = os.clock() + 2
+            local Positions = {}
+            for Object, Entry in pairs(Entries) do
+                if NeededItems[Object.Name] and Entry.Part and Entry.Part.Parent then
+                    local Position = Entry.Part.Position
+                    if S.UnlimitedDistance or (Position - Origin).Magnitude / GameUnitsPerMeter <= S.MaxDistance then
+                        Positions[#Positions + 1] = Position
+                    end
+                end
+            end
+            if #Positions > 0 then
+                StreamIndex = StreamIndex % #Positions + 1
+                local Position = Positions[StreamIndex]
+                StreamWorker = task.defer(function()
+                    local OK, Error = pcall(Player.RequestStreamAroundAsync, Player, Position, 1)
+                    if not OK then S.LastStreamError = tostring(Error) end
+                    StreamWorker = nil
+                end)
+            end
+        end
         for Object, Entry in pairs(Entries) do
             local Label, Part = Entry.Label, Entry.Part
             if not NeededItems[Object.Name] then Label.Visible = false; continue end
@@ -24585,7 +24835,7 @@ return function(Library, ESP, UnloadCallbacks)
                 continue
             end
             local Meters = (Part.Position - Origin).Magnitude / GameUnitsPerMeter
-            if Meters > S.MaxDistance then Label.Visible = false; continue end
+            if not S.UnlimitedDistance and Meters > S.MaxDistance then Label.Visible = false; continue end
             local Point, OnScreen = Camera:WorldToViewportPoint(Part.Position)
             Label.Visible = OnScreen and Point.Z > 0
             if not Label.Visible then continue end
@@ -24599,6 +24849,7 @@ return function(Library, ESP, UnloadCallbacks)
     end, true)
     UnloadCallbacks[#UnloadCallbacks + 1] = function()
         Connection:Disconnect()
+        if StreamWorker then pcall(task.cancel, StreamWorker); StreamWorker = nil end
         Holder:Destroy()
         for _, C in ipairs(WorldConnections) do C:Disconnect() end
         ClearQuestConnections()
@@ -26067,6 +26318,7 @@ end
                 Items = {"Circles", "Large circle", "360 arrows", "Sound chams"}, Default = SoundSettings.Modes,
                 Callback = function(Value) Library.SoundESP:SetModes(Value) end})
             Toggle(General, "Enabled", "Enabled", ESP, "Enabled")
+            Toggle(General, "Force render", "ForceRender", ESP, "ForceRender")
             Toggle(General, "Squad health HUD", "SquadHealthHUD", Library.SquadHealth, "Enabled")
             General:Toggle({
                 Name = "Reap IR vision", Flag = "VisualReapIR", Default = false,
@@ -26128,6 +26380,8 @@ end
             local QuestItems = OtherESPPage:Section({Name = "Quest items", Side = 1})
             Toggle(QuestItems, "Enabled", "QuestItemESPEnabled", QuestItemESP, "Enabled", "Color")
             Toggle(QuestItems, "Distance", "QuestItemESPDistance", QuestItemESP, "Distance")
+            Toggle(QuestItems, "Force render", "QuestItemESPForceRender", QuestItemESP, "ForceRender")
+            Toggle(QuestItems, "No distance limit", "QuestItemESPUnlimitedDistance", QuestItemESP, "UnlimitedDistance")
             Slider(QuestItems, "Max distance", "QuestItemESPMaxDistance", QuestItemESP, "MaxDistance", 10, 5000, 1, "m")
 
             local Labels = PlayersESPPage:Section({Name = "ESP flags & health", Side = 2})
@@ -26492,6 +26746,7 @@ end
             ModToggle(WeaponSection, "Always full auto", "FullAuto")
             ModToggle(WeaponSection, "No obstruction", "NoObstruction")
             ModToggle(WeaponSection, "Instant aim", "InstantAim")
+            ModToggle(WeaponSection, "Instant hit", "InstantHit")
             ModToggle(WeaponSection, "Instant equip", "InstantEquip")
             ModToggle(WeaponSection, "Keep equip animation", "KeepEquipAnimation")
             ModToggle(WeaponSection, "Sprint while shooting", "SprintShooting")
