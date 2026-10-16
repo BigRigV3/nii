@@ -15040,7 +15040,7 @@ local function BuildEffectsMenu(E, UIPage, LightingPage, WorldDetailPage, LocalP
     })
     BoundToggle(Movement, "Spiderman", "SpiderEnabled", E.Spider, "Enabled", "SpiderKeybind")
     Slider(Movement, "Climb speed", "SpiderSpeed", E.Spider, "Speed", 1, 50, 0.1, " studs/s")
-    local Blink = PlayerPage:Section({Name = "Blink", Side = 1})
+    local Blink = PlayerPage:Section({Name = "Blink", Side = 2})
     BoundToggle(Blink, "Enabled", "BlinkEnabled", E.Blink, "Enabled", "BlinkKeybind")
     Slider(Blink, "Speed", "BlinkSpeed", E.Blink, "Speed", 1, 50, 0.1, " studs/s")
     Toggle(Blink, "Restore position", "BlinkRestore", E.Blink, "Restore")
@@ -22259,7 +22259,7 @@ end
                 Effects.NoclipActive = false
                 Indicator.Visible = false
             end
-            local Section = Page:Section({Name = "Noclip", Side = 1})
+            local Section = Page:Section({Name = "Noclip", Side = 2})
             Section:Toggle({Name = "Enabled", Flag = "NoclipEnabled", Default = false,
                 Callback = function(Value)
                     Settings.Enabled = Value
