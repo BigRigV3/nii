@@ -10859,9 +10859,11 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             end
             return Params
         end
+        local NativeRaycast = workspace.Raycast
         local function Cast(Origin, Direction, Params)
             if Test.Raycast then return Test.Raycast(Origin, Direction, Params) end
-            return workspace:Raycast(Origin, Direction, Params)
+            -- Internal casts must not re-enter the projectile __namecall hook.
+            return NativeRaycast(workspace, Origin, Direction, Params)
         end
         function Controller:IsHitscanActive()
             local Bind = Library.Flags and Library.Flags.HitscanKeybind
