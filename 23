@@ -10503,7 +10503,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 ForceHeadshots = true, HSRTargeting = false, InstantBullet = false, InstantHit = false,
                 NoSway = false, NoBobbing = false,
                 FullAuto = false, NoObstruction = false, InstantAim = false, InstantEquip = false, KeepEquipAnimation = false,
-                SprintShooting = false, AutoFill = false, PacketReload = false, HotSwapReload = false},
+                SprintShooting = false, AutoFill = false, PacketReload = false,
+                AutoReload = false, ReloadThreshold = 0},
             FOVStyle = {Gradient = true, Glow = true, AnimateGradient = true, AnimateGlow = true,
                 AnimateVisibility = true, FadeTime = 0.2,
                 Color1 = Library.Theme and Library.Theme.Accent or Color3.new(1, 1, 1), Color2 = Color3.fromRGB(170, 110, 126),
@@ -10517,7 +10518,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
         local FPS, Bullet, FunctionLibrary, LiveFPS, NamecallOriginal, NamecallHook
         local NamecallDispatch, NamecallHandler
         local ReloadBusy, FillBusy, ReloadQueued = false, false, false
-        local HotSwapFocused = true
+        local ReloadFocused = true
         local Shots = {}
         local BulletContext
         local ReportingHit = false
@@ -11465,32 +11466,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             return false
         end
         function Controller:TryRageReload(State)
-            if not self:IsRageActive() or not self.Rage.AutoReload or not State or State.player ~= Player
-                or not State.isEquipped or State.useModuleName ~= "RangedWeaponDefault"
-                or State.reloading or State.equipping or State.useDebounce or not State.Operational
-                or (tonumber(State.Bullets) or 0) > self.Rage.ReloadThreshold then return false end
-            local Now = ManipulationClock()
-            if self.RageReloadAt and Now - self.RageReloadAt < .35 then return false end
-            self.RageReloadAt = Now
-            task.spawn(function()
-                if not self:IsRageActive() or not self.Rage.AutoReload or State.reloading then return end
-                local Release
-                local OK, Error = pcall(function()
-                    if Test.Reload then Test.Reload(State); return end
-                    if type(keypress) == "function" and type(keyrelease) == "function" then
-                        Release = function() keyrelease(0x52) end
-                        keypress(0x52)
-                    else
-                        local VirtualInput = game:GetService("VirtualInputManager")
-                        Release = function() VirtualInput:SendKeyEvent(false, Enum.KeyCode.R, false, game) end
-                        VirtualInput:SendKeyEvent(true, Enum.KeyCode.R, false, game)
-                    end
-                    task.wait(.03)
-                end)
-                if Release then pcall(Release) end
-                if not OK then self.LastReloadError = tostring(Error) end
-            end)
-            return true
+            if not self:IsRageActive() or not self.Rage.AutoReload then return false end
+            return self:TryAutoReload(State, true)
         end
         function Controller:ShouldAutoShoot(State)
             self:TryRageReload(State)
@@ -11807,6 +11784,38 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             return Equipped and Equipped.Value, Variables
         end
     
+        function Controller:IsPacketReloadEnabled(Automatic)
+            return self.Active and (not Automatic and self.Mods.PacketReload
+                or Automatic and (self.Mods.AutoReload or (self:IsRageActive() and self.Rage.AutoReload)))
+        end
+
+        function Controller:TryAutoReload(State, RageOnly)
+            local RageReload = self:IsRageActive() and self.Rage.AutoReload
+            if not self.Active or not (RageOnly and RageReload or not RageOnly and (self.Mods.AutoReload or RageReload))
+                or not ReloadFocused or (Input.GetFocusedTextBox and Input:GetFocusedTextBox())
+                or ReloadBusy or FillBusy or not State or State.player ~= Player
+                or not State.isEquipped or not State.weapon or not State.weapon.Parent
+                or (State.character and State.character ~= Player.Character)
+                or State.useModuleName ~= "RangedWeaponDefault" or not State.Operational
+                or State.reloading or State.equipping or State.useDebounce then return false end
+            for _, Window in State.CancelTables or {} do if Window.Visible then return false end end
+            local Bullets = tonumber(State.Bullets)
+            if not Bullets then return false end
+            local Threshold = tonumber((RageOnly or not self.Mods.AutoReload)
+                and self.Rage.ReloadThreshold or self.Mods.ReloadThreshold) or 0
+            local Capacity = tonumber(State.MaxAmmo)
+            if Capacity and Capacity > 0 then Threshold = math.min(Threshold, Capacity - 1) end
+            if Bullets > math.max(0, math.floor(Threshold)) then return false end
+            if State.reloadType == "magazine" then
+                local Magazine = self:ChooseMagazine(State.weapon)
+                if not Magazine or (tonumber(Magazine:GetAttribute("LoadedAmmo")) or 0) <= Bullets then return false end
+            end
+            local Now = ManipulationClock()
+            if self.AutoReloadAt and Now - self.AutoReloadAt < .5 then return false end
+            self.AutoReloadAt = Now
+            return self:TryPacketReload(State, true)
+        end
+
         function Controller:ChooseMagazine(Weapon)
             local Props = Properties(Weapon)
             local Compatible = Props and Props:FindFirstChild("CompatibleMagazines")
@@ -11850,114 +11859,6 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             return false
         end
     
-        local HotbarKeys = {Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three, Enum.KeyCode.Four,
-            Enum.KeyCode.Five, Enum.KeyCode.Six, Enum.KeyCode.Seven, Enum.KeyCode.Eight, Enum.KeyCode.Nine, Enum.KeyCode.Zero}
-        function Controller:GetHotSwapKey(Weapon)
-            if not Weapon or not Weapon.Parent then return nil end
-            local function SlotKey(Value)
-                local Name = tostring(Value or ""):lower():gsub("[%s_%-]", "")
-                local WeaponSlots = {itemback1 = 1, itemback2 = 2, itemhip1 = 3}
-                local Slot = WeaponSlots[Name] or tonumber(Name) or tonumber(Name:match("^hotbarslot(%d+)$"))
-                    or tonumber(Name:match("^hotbar(%d+)$")) or tonumber(Name:match("^slot(%d+)$"))
-                if Slot == 0 then Slot = 10 end
-                return Slot and HotbarKeys[Slot]
-            end
-            local PlayerGui = Player:FindFirstChild("PlayerGui")
-            local MainGui = PlayerGui and PlayerGui:FindFirstChild("MainGui")
-            local MainFrame = MainGui and MainGui:FindFirstChild("MainFrame")
-            local Hotbar = MainFrame and MainFrame:FindFirstChild("Hotbar")
-            if Hotbar then
-                for _, Slot in ipairs(Hotbar:GetChildren()) do
-                    local Reference = Slot:FindFirstChild("Item")
-                    if Reference and Reference:IsA("ObjectValue") and Reference.Value == Weapon then
-                        local Label = Slot:FindFirstChild("SlotType")
-                        local Key = Label and Label:IsA("TextLabel") and SlotKey(Label.Text)
-                            or SlotKey(Slot:GetAttribute("HotbarSlot")) or SlotKey(Slot:GetAttribute("Slot")) or SlotKey(Slot.Name)
-                        if Key then return Key end
-                    end
-                end
-            end
-            return SlotKey(Weapon:GetAttribute("HotbarSlot")) or SlotKey(Weapon:GetAttribute("Slot"))
-        end
-        function Controller:PressHotSwapKey(Key)
-            if not self.Active or not self.Mods.HotSwapReload or not HotSwapFocused or Input:GetFocusedTextBox() then return false end
-            if Test.PressHotbarKey then return Test.PressHotbarKey(Key) end
-            local Press, Release
-            if type(keypress) == "function" and type(keyrelease) == "function" then
-                Press = function() keypress(Key.Value) end
-                Release = function() keyrelease(Key.Value) end
-            else
-                local VirtualInput = game:GetService("VirtualInputManager")
-                Press = function() VirtualInput:SendKeyEvent(true, Key, false, game) end
-                Release = function() VirtualInput:SendKeyEvent(false, Key, false, game) end
-            end
-            local Ok, Error = pcall(Press)
-            if Ok then task.wait(0.04) end
-            local Released, ReleaseError = pcall(Release)
-            if not Ok then error(Error, 0) end
-            if not Released then error(ReleaseError, 0) end
-            return true
-        end
-        function Controller:TryHotSwapReload(State)
-            if not self.Active or not self.Mods.HotSwapReload then return false end
-            if ReloadBusy then return true end
-            if FillBusy then
-                if not ReloadQueued then
-                    ReloadQueued = true
-                    task.spawn(function()
-                        local Ready = WaitFor(function() return not FillBusy end, 2)
-                        ReloadQueued = false
-                        if Ready and self.Active and self.Mods.HotSwapReload then self:TryHotSwapReload(State) end
-                    end)
-                end
-                return true
-            end
-            local Weapon = State and State.weapon or EquippedWeapon()
-            local Props = Properties(Weapon)
-            if not Weapon or not Props or Props:GetAttribute("ItemType") ~= "RangedWeapon"
-                or EquippedWeapon() ~= Weapon then return false end
-            local Magazine, Attachments = self:ChooseMagazine(Weapon), Weapon:FindFirstChild("Attachments")
-            if not Magazine then Library:Notification("Hotswap reload", "No loaded compatible magazine in your inventory.", 3); return true end
-            if not Attachments then return false end
-            local Key = self:GetHotSwapKey(Weapon)
-            if not Key then return false end
-            ReloadBusy = true
-            task.spawn(function()
-                local Unequipped = false
-                local function Reequip()
-                    if not Unequipped or not self.Active or not self.Mods.HotSwapReload or not Weapon.Parent
-                        or not HotSwapFocused or Input:GetFocusedTextBox() then return end
-                    local Current = EquippedWeapon()
-                    if Current == Weapon then Unequipped = false; return end
-                    if Current ~= nil or self:GetHotSwapKey(Weapon) ~= Key then return end
-                    if self:PressHotSwapKey(Key) then Unequipped = false end
-                end
-                local Success, Error = pcall(function()
-                    if not self:PressHotSwapKey(Key) then return end
-                    if not WaitFor(function() return EquippedWeapon() ~= Weapon end, 2) then error("The hotbar key did not unequip the weapon.") end
-                    Unequipped = true
-                    if EquippedWeapon() ~= nil then error("Weapon changed; hotswap cancelled.") end
-                    if not self.Active or not self.Mods.HotSwapReload or not HotSwapFocused or not Weapon.Parent then error("Hotswap cancelled.") end
-                    Remotes.Unload:FireServer(Weapon)
-                    local function HasMagazine()
-                        for _, Item in ipairs(Attachments:GetChildren()) do if Item:GetAttribute("Slot") == "Magazine" then return true end end
-                        return false
-                    end
-                    if not WaitFor(function() return not HasMagazine() end, 2) then error("Server did not remove the magazine.") end
-                    if not self.Mods.HotSwapReload or not HotSwapFocused or EquippedWeapon() ~= nil then error("Hotswap cancelled.") end
-                    if not Magazine.Parent then error("Selected magazine is no longer available.") end
-                    Remotes.InventoryMove:FireServer(Magazine:GetAttribute("Slot"), "Magazine", Magazine.Parent, Attachments, nil)
-                    if not WaitFor(HasMagazine, 2) then error("Server did not install the magazine.") end
-                    Reequip()
-                    if Unequipped or not WaitFor(function() return EquippedWeapon() == Weapon end, 2) then error("The hotbar key did not re-equip the weapon.") end
-                end)
-                pcall(Reequip)
-                ReloadBusy = false
-                if not Success and self.Active then Library:Notification("Hotswap reload", tostring(Error), 4) end
-            end)
-            return true
-        end
-    
         function Controller:FillMagazine()
             if FillBusy or ReloadBusy or not self.Active or not self.Mods.AutoFill then return end
             local Ammo, Magazine = self:FindMagazineFill()
@@ -11973,42 +11874,65 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             end)
         end
     
-        function Controller:PacketReload(State, Weapon, Props)
+        function Controller:PacketReload(State, Weapon, Props, Automatic)
             if not State or State.weapon ~= Weapon or State.reloading or State.useDebounce then return false end
-            local Item, Variant
-            if State.reloadType == "magazine" then
-                Item = self:ChooseMagazine(Weapon)
-                if not Item then return false end
-                local Attachments = Weapon:FindFirstChild("Attachments")
-                local Attached
-                if Attachments then
-                    for _, Candidate in ipairs(Attachments:GetChildren()) do
-                        if Candidate:GetAttribute("Slot") == "Magazine" then Attached = Candidate; break end
-                    end
-                end
-                Variant = (tonumber(State.Bullets) or 0) > 0 and 1 or (Attached and 2 or 3)
-            elseif State.reloadType == "loadByHand" then
-                if (tonumber(State.Bullets) or 0) >= (tonumber(State.MaxAmmo) or 0) then return true end
+            local Item, Attachments, EquipId, ItemSlot
+            local function FindAmmo()
                 local Compatible = Props:FindFirstChild("CompatibleAmmo")
                 local Preferred = Props:GetAttribute("PreferredAmmo")
+                local Best
                 for _, Candidate in ipairs(InventoryItems()) do
                     if Compatible and Compatible:GetAttribute(Candidate.Name)
                         and (tonumber(Candidate:GetAttribute("Amount")) or 0) > 0 then
-                        if not Item or Candidate.Name == Preferred then Item = Candidate end
+                        if not Best or Candidate.Name == Preferred then Best = Candidate end
                         if Candidate.Name == Preferred then break end
                     end
                 end
+                return Best
+            end
+            if State.reloadType == "magazine" then
+                Item = self:ChooseMagazine(Weapon)
                 if not Item then return false end
-                Variant = 1
+                Attachments = Weapon:FindFirstChild("Attachments")
+                local _, Variables = EquippedWeapon()
+                EquipId = Variables and Variables:GetAttribute("EquipId")
+                ItemSlot = Item:GetAttribute("Slot") or Item:GetAttribute("SlotType")
+                if not Attachments or not EquipId or not ItemSlot or not Remotes:FindFirstChild("Equip")
+                    or not Remotes:FindFirstChild("InventoryMove") then return false end
+            elseif State.reloadType == "loadByHand" then
+                if (tonumber(State.Bullets) or 0) >= (tonumber(State.MaxAmmo) or 0) then return true end
+                Item = FindAmmo()
+                if not Item or not Remotes:FindFirstChild("Reload") then return false end
             else
                 return false
             end
             ReloadBusy = true
             task.spawn(function()
                 local Success, Error = pcall(function()
-                    if not self.Active or not self.Mods.PacketReload or State.weapon ~= Weapon
+                    if not self:IsPacketReloadEnabled(Automatic) or State.weapon ~= Weapon
                         or EquippedWeapon() ~= Weapon or not Item.Parent then return end
-                    Remotes.Reload:InvokeServer(nil, Variant, Item)
+                    if Attachments then
+                        Remotes.Equip:FireServer()
+                        Remotes.InventoryMove:FireServer(ItemSlot, "Magazine", Item.Parent, Attachments, nil)
+                        Remotes.Equip:FireServer(Weapon, EquipId)
+                        WaitFor(function()
+                            return not Weapon.Parent or (Item.Parent == Attachments and EquippedWeapon() == Weapon)
+                        end, .6)
+                    else
+                        local Capacity = math.max(0, math.floor(tonumber(State.MaxAmmo) or 0))
+                        for _ = 1, Capacity do
+                            if not self:IsPacketReloadEnabled(Automatic) or State.weapon ~= Weapon
+                                or EquippedWeapon() ~= Weapon or not Weapon.Parent then break end
+                            local Before = tonumber(Weapon:GetAttribute("LoadedAmmo")) or tonumber(State.Bullets) or 0
+                            if Before >= Capacity then break end
+                            local Ammo = FindAmmo()
+                            if not Ammo then break end
+                            Remotes.Reload:InvokeServer(nil, 1, Ammo)
+                            if not WaitFor(function()
+                                return not Weapon.Parent or (tonumber(Weapon:GetAttribute("LoadedAmmo")) or 0) > Before
+                            end, .5) then break end
+                        end
+                    end
                     if not self.Active or State.weapon ~= Weapon or EquippedWeapon() ~= Weapon then return end
                     local Modules = ReplicatedStorage:FindFirstChild("Modules")
                     local Module = Modules and Modules:FindFirstChild("FPS")
@@ -12028,8 +11952,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             return true
         end
     
-        function Controller:TryPacketReload(State)
-            if not self.Active or not self.Mods.PacketReload then return false end
+        function Controller:TryPacketReload(State, Automatic)
+            if not self:IsPacketReloadEnabled(Automatic) then return false end
             if ReloadBusy then return true end
             if FillBusy then
                 if not ReloadQueued then
@@ -12037,7 +11961,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                     task.spawn(function()
                         local Ready = WaitFor(function() return not FillBusy end, 2)
                         ReloadQueued = false
-                        if Ready and self.Active and self.Mods.PacketReload then self:TryPacketReload(State) end
+                        if Ready and self:IsPacketReloadEnabled(Automatic) then self:TryPacketReload(State, Automatic) end
                     end)
                 end
                 return true
@@ -12045,7 +11969,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             local Weapon = State and State.weapon or EquippedWeapon()
             local Props = Properties(Weapon)
             if not Weapon or not Props or Props:GetAttribute("ItemType") ~= "RangedWeapon" then return false end
-            return self:PacketReload(State, Weapon, Props)
+            return self:PacketReload(State, Weapon, Props, Automatic)
         end
     
         local function Wrap(Table, Key, Callback)
@@ -12264,7 +12188,6 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             end)
             Wrap(FPS, "reload", function(Original, State, ...)
                 Capture(State)
-                if Controller:TryHotSwapReload(State) then return end
                 if Controller:TryPacketReload(State) then return end
                 return Original(State, ...)
             end)
@@ -12523,6 +12446,10 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                                                                                                    
                 for Id, Shot in pairs(Shots) do if os.clock() - Shot.Created > 60 then Shots[Id] = nil end end
                 if Controller.Mods.AutoFill then Controller:FillMagazine() end
+                if Controller.Mods.AutoReload or (Controller.Rage.AutoReload and Controller:IsRageActive()) then
+                    if not LiveFPS or LiveFPS.character ~= Player.Character then DiscoverFPS() end
+                    Controller:TryAutoReload(LiveFPS)
+                end
             end, 0.5))
         end
     
@@ -12578,19 +12505,18 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 Controller:UpdateForceHitbox()
             end, 1 / 30))
             table.insert(Connections, Input.WindowFocusReleased:Connect(function()
-                HotSwapFocused = false
+                ReloadFocused = false
                 ManipulationFocused = false
                 Controller:RestoreManipulation()
                 Controller:RestoreForceHitbox()
             end))
-            table.insert(Connections, Input.WindowFocused:Connect(function() ManipulationFocused = true; HotSwapFocused = true end))
+            table.insert(Connections, Input.WindowFocused:Connect(function() ManipulationFocused = true; ReloadFocused = true end))
             table.insert(Connections, Player.CharacterRemoving:Connect(function()
                 Controller:RestoreManipulation()
                 Controller:RestoreForceHitbox()
             end))
             ContextActions:BindActionAtPriority("CinnamonPacketReload", function(_, State)
-                if not (Controller.Mods.HotSwapReload or Controller.Mods.PacketReload) or Input:GetFocusedTextBox() then return Enum.ContextActionResult.Pass end
-                if State == Enum.UserInputState.Begin and Controller:TryHotSwapReload(LiveFPS) then return Enum.ContextActionResult.Sink end
+                if not Controller.Mods.PacketReload or Input:GetFocusedTextBox() then return Enum.ContextActionResult.Pass end
                 if State == Enum.UserInputState.Begin and Controller:TryPacketReload(LiveFPS) then return Enum.ContextActionResult.Sink end
                 return ReloadBusy and Enum.ContextActionResult.Sink or Enum.ContextActionResult.Pass
             end, false, Enum.ContextActionPriority.High.Value + 100, Enum.KeyCode.R)
@@ -27688,7 +27614,10 @@ end
             ModToggle(WeaponSection, "Sprint while shooting", "SprintShooting")
             ModToggle(AmmoSection, "Auto fill empty mags", "AutoFill")
             ModToggle(AmmoSection, "Packet reload", "PacketReload")
-            ModToggle(AmmoSection, "Hotswap reload", "HotSwapReload")
+            ModToggle(AmmoSection, "Auto reload", "AutoReload")
+            AmmoSection:Slider({Name = "Reload at", Flag = "WeaponModReloadThreshold", Default = Mods.ReloadThreshold,
+                Min = 0, Max = 100, Decimals = 1, Suffix = " rounds",
+                Callback = function(Value) Mods.ReloadThreshold = Value end})
         end
     end
 
