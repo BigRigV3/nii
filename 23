@@ -1480,15 +1480,32 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             return NewThread
         end
         
-        Library.SafeCall = function(self, Function, ...)
-            local Success, Result = pcall(Function, ...)
+        do
+            local ReadIdentity = getthreadidentity or getidentity
+            local WriteIdentity = setthreadidentity or setidentity
+            Library.SafeCall = function(self, Function, ...)
+                local Identity
+                if type(ReadIdentity) == "function" and type(WriteIdentity) == "function" then
+                    local OK, Value = pcall(ReadIdentity)
+                    if OK then Identity = Value end
+                end
+                local Success, Result = pcall(Function, ...)
+                -- Game callbacks can change the thread context used by subsequent UI updates.
+                if Identity ~= nil then
+                    local Restored, RestoreError = pcall(WriteIdentity, Identity)
+                    if not Restored then
+                        self.LastCallbackError = RestoreError
+                        return false, RestoreError
+                    end
+                end
 
-            if not Success then
-                self.LastCallbackError = Result
-                return false, Result
+                if not Success then
+                    self.LastCallbackError = Result
+                    return false, Result
+                end
+
+                return Success
             end
-
-            return Success
         end
 
         Library.Connect = function(self, Event, Callback, Name, Interval)
@@ -10634,7 +10651,8 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
         end
 
         function Controller:GetAimBone(Character)
-            if Character and Players:GetPlayerFromCharacter(Character) and self:IsHSRTargetingActive() then return "UpperTorso" end
+            -- HSR changes the reported hit part, while aim stays on the selected bone.
+            if self.Mods.HSRTargeting then return self.Aim.Bone end
             return self.Mods.ForceHeadshots and "Head" or self.Aim.Bone
         end
 
@@ -10904,14 +10922,13 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
             local Range = math.clamp(tonumber(Settings.Range) or 8, 1, 30)
             local Character = self:GetDamageCharacter(Part) or Part.Parent
             local Signature = table.concat(Settings.Parts, ",")
-            local TorsoOnly = Players:GetPlayerFromCharacter(Character) and self:IsHSRTargetingActive()
             local Cached = SurfaceCache[Part]
             if Cached and Now - Cached.Time <= .03 and Cached.Range == Range and Cached.Multiscan == Settings.Multiscan
-                and Cached.Signature == Signature and Cached.TorsoOnly == TorsoOnly and Cached.Character == Character
+                and Cached.Signature == Signature and Cached.Character == Character
                 and Cached.Frame == Part.CFrame and (Cached.Origin - Origin).Magnitude <= .35
                 and (not Cached.Result or Cached.Result.Part.Parent == Character) then return Cached.Result end
             local Parts = {Part}
-            if Settings.Multiscan and not TorsoOnly then
+            if Settings.Multiscan then
                 for _, Name in ipairs(Settings.Parts) do
                     local Candidate = Character:FindFirstChild(Name)
                     if Candidate and Candidate:IsA("BasePart") and Candidate ~= Part then table.insert(Parts, Candidate) end
@@ -10933,7 +10950,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 if Result then break end
             end
             SurfaceCache[Part] = {Time = Now, Origin = Origin, Frame = Part.CFrame, Range = Range,
-                Character = Character, Signature = Signature, Multiscan = Settings.Multiscan, TorsoOnly = TorsoOnly, Result = Result}
+                Character = Character, Signature = Signature, Multiscan = Settings.Multiscan, Result = Result}
             return Result
         end
         function Controller:FindShotSolution(Origin, Part, State)
@@ -10970,14 +10987,24 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
                 if Humanoid and Humanoid.Health > 0 then
                     if Solution.ForceHit then
-                        return Origin, Direction, {Instance = Part, Position = Part.Position, Material = Part.Material,
-                            Normal = Vector3.yAxis, Distance = (Part.Position - Solution.Origin).Magnitude}
+                        -- Let Roblox calculate the surface position, normal, and distance together.
+                        -- A fabricated center hit can place the native impact effect in empty air.
+                        local Offset = Part.Position - Origin
+                        if Offset.Magnitude > 0.001 then
+                            local Params = RaycastParams.new()
+                            Params.FilterType = Enum.RaycastFilterType.Include
+                            Params.FilterDescendantsInstances = {Part}
+                            Params.CollisionGroup = "WeaponRay"
+                            local Hit = Cast(Origin, Offset.Unit * (Offset.Magnitude + Part.Size.Magnitude), Params)
+                            if Hit then return Origin, Direction, Hit end
+                        end
+                        return Origin, Direction
                     end
                     Origin, Direction = Solution.Origin, Part.Position - Solution.Origin
                 end
             end
             if self.Mods.InstantBullet and typeof(Direction) == "Vector3" and Direction.Magnitude > 0 then
-                Direction = Direction.Unit * 9e9
+                Direction = Direction.Unit * 4000
             end
             return Origin, Direction
         end
@@ -12381,7 +12408,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 Controller:QueueAC(Character)
             end))
             Controller:QueueAC(Player.Character)
-            print("ac has been cinnamonned")
+            print("ac has been cinnamogged")
             table.insert(Connections, ConnectScheduled(RunService.Heartbeat, function()
                 Controller:UpdateForceHitbox()
             end, 1 / 30))
