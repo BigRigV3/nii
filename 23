@@ -19769,7 +19769,7 @@ return function(Library, Page, Effects, UnloadCallbacks)
     local Http = game:GetService("HttpService")
     local Player = game:GetService("Players").LocalPlayer
     local S = {Enabled = false, Open = false, Slots = {}, Speed = 1, Loop = true, CancelOnMove = true}
-    local Alive, Revision, FontRevision = true, 0, 0
+    local Alive, Revision = true, 0
     local Track, DancingHumanoid, Started, HeldInput, SavedMouse, Selected
     local DanceSound, TakeLSoundAsset, GriddySoundAsset, PopularSoundAsset
     local ResolvedAnimations = {}
@@ -20040,26 +20040,7 @@ return function(Library, Page, Effects, UnloadCallbacks)
             if DanceSound then DanceSound.PlaybackSpeed = Value end
         end})
     Section:Button():Add("Stop dance", StopDance)
-    Section:Label("Test emotes without changing the camera")
-    for Index, Slot in ipairs(S.Slots) do
-        Section:Button():Add("Test " .. Slot.Name, function() Play(Index, true) end)
-    end
     Status = Section:Label("No dance playing")
-    local SlotsSection = Page:Section({Name = "Dance wheel slots", Side = 2})
-    for Index, Slot in ipairs(S.Slots) do
-        SlotsSection:Textbox({Name = "Slot " .. Index .. " name", Flag = "FortniteSlot" .. Index .. "Name",
-            Default = Slot.Name, Finished = true, Callback = function(Value)
-                Slot.Name = tostring(Value):match("^%s*(.-)%s*$"):sub(1, 32)
-                if Slot.Name == "" then Slot.Name = "Dance " .. Index end
-                Sectors[Index].Label.Text = Slot.Name
-            end})
-        SlotsSection:Textbox({Name = "Slot " .. Index .. " animation ID", Flag = "FortniteSlot" .. Index .. "Id",
-            Default = Slot.Id, Placeholder = "Roblox animation ID or rbxassetid://ID", Finished = true,
-            Callback = function(Value)
-                Slot.Id = Library:NormalizeHitsoundId(Value) or ""
-                if tostring(Value):match("%S") and Slot.Id == "" then SetStatus("Invalid animation ID for slot " .. Index) end
-            end})
-    end
     local function ApplyFontPath(Path)
         local Definition = Library.Folders.Assets .. "/FortniteFont.current.json"
         writefile(Definition, Http:JSONEncode({name = "FortniteWheel", faces = {{name = "Regular", weight = 400,
@@ -20075,32 +20056,6 @@ return function(Library, Page, Effects, UnloadCallbacks)
             for _, Label in ipairs(FontLabels) do Label.FontFace = Face end
         end)
     end
-    local FontURL = "https://raw.githubusercontent.com/BigRigV3/Cinnamon/main/Anton-Regular.ttf"
-    Section:Textbox({Name = "Wheel font URL (.ttf)", Flag = "FortniteFontURL", Default = "", Finished = true,
-        Placeholder = "Raw GitHub URL for your font", Callback = function(Value) FontURL = tostring(Value):match("^%s*(.-)%s*$") end})
-    Section:Button():Add("Load wheel font", function()
-        FontRevision += 1
-        local Version, URL = FontRevision, FontURL
-        SetStatus("Loading wheel font...")
-        task.spawn(function()
-            local OK, Error = pcall(function()
-                local Path = FontPath
-                if URL ~= "" then
-                    assert(URL:match("^https://"), "Use an HTTPS URL returning a TTF file")
-                    local Hash = 0
-                    for Index = 1, #URL do Hash = (Hash * 31 + URL:byte(Index)) % 4294967291 end
-                    Path = Library.Folders.Assets .. "/FortniteFont-" .. string.format("%08x", Hash) .. ".ttf"
-                    Library:EnsureAsset(Path, URL)
-                end
-                assert(isfile(Path), "Add Cinnamon/Assets/Fortnite.ttf or enter a font URL")
-                local Bytes = readfile(Path)
-                assert(Bytes:sub(1, 4) == string.char(0, 1, 0, 0) or Bytes:sub(1, 4) == "OTTO", "URL must return a font file")
-                if Alive and FontRevision == Version then ApplyFontPath(Path) end
-            end)
-            if Alive and FontRevision == Version then SetStatus(OK and "Wheel font loaded" or tostring(Error)) end
-        end)
-    end)
-    Section:Label("Use animation IDs that match your character's rig.")
     local Connections = {}
     local function Connect(Signal, Callback) Connections[#Connections + 1] = Signal:Connect(Callback) end
     Connect(Input.InputBegan, function(Key, Processed)
@@ -20136,7 +20091,7 @@ return function(Library, Page, Effects, UnloadCallbacks)
         elseif Track.Length > 0 and not Track.IsPlaying then StopDance() end
     end, nil, 0.1)
     UnloadCallbacks[#UnloadCallbacks + 1] = function()
-        Alive = false; FontRevision += 1
+        Alive = false
         Close(); StopDance()
         Monitor.Connection:Disconnect()
         for _, Connection in ipairs(Connections) do Connection:Disconnect() end
@@ -20146,7 +20101,7 @@ return function(Library, Page, Effects, UnloadCallbacks)
     Library.FortniteMode = S
 end
         end)()
-        BuildDanceWheel(Library, PlayerMiscPage, EffectsController, UnloadCallbacks)
+        BuildDanceWheel(Library, MiscPage:SubPage({Name = "Fortnite mode", Columns = 1}), EffectsController, UnloadCallbacks)
         end
                                                                                          
         do
@@ -21082,7 +21037,7 @@ end
             local Root = Character and Character:FindFirstChild("HumanoidRootPart")
             local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
             local Settings = E.Spider
-            if not E.Active or not E.Focused or not Bound(Settings, "SpiderKeybind") or E.BlinkActive
+            if not E.Active or not E.Focused or not Bound(Settings, "SpiderKeybind") or E.BlinkActive or E.NoclipActive
                 or E.FreecamActive or (E.Freecam.Enabled and E.Freecam.Held)
                 or Input:GetFocusedTextBox() or not Root or Root.Anchored or not Humanoid
                 or Humanoid.Health <= 0 or Humanoid.Sit or Humanoid.PlatformStand then StopSpider(); return end
@@ -21134,7 +21089,7 @@ end
             local Settings = E.Blink
             local Camera = Testing and Testing.Camera or workspace.CurrentCamera
             local Requested = Bound(Settings, "BlinkKeybind")
-            local Valid = E.Active and E.Focused and Camera and Root and Humanoid and Humanoid.Health > 0
+            local Valid = E.Active and E.Focused and not E.NoclipActive and Camera and Root and Humanoid and Humanoid.Health > 0
                 and not Humanoid.Sit and not Humanoid.PlatformStand and not Input:GetFocusedTextBox()
                 and not E.FreecamActive and not (E.Freecam.Enabled and E.Freecam.Held)
             if BlinkState and (not Requested or not Valid or BlinkState.Root ~= Root or BlinkState.Humanoid ~= Humanoid) then
@@ -21201,7 +21156,7 @@ end
             local Root = Character and Character:FindFirstChild("HumanoidRootPart")
             local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
             local Enabled = E.IsUndergroundActive and E:IsUndergroundActive() or (not E.IsUndergroundActive and E.Active and E.Focused and E.Underground.Enabled)
-            if not Enabled or E.BlinkActive or (E.IsUGResolverActive and E:IsUGResolverActive())
+            if not Enabled or E.BlinkActive or E.NoclipActive or (E.IsUGResolverActive and E:IsUGResolverActive())
                 or not Root or not Humanoid or Humanoid.Health <= 0 then return end
             local Settings = E.Underground
             Underground = {Root = Root, CFrame = Root.CFrame}
@@ -21427,6 +21382,711 @@ end
     end)()
         ReportLoadingProgress(0.59, "Preparing movement controls?")
         local MovementController = CreateMovementController(EffectsController, UnloadCallbacks)
+        do
+        local function BuildNoclip(Library, Page, Effects, UnloadCallbacks)
+            local Players = game:GetService("Players")
+            local Storage = game:GetService("ReplicatedStorage")
+            local Run = game:GetService("RunService")
+            local Input = game:GetService("UserInputService")
+            local Player = Players.LocalPlayer
+            local Alive = true
+            local Settings = {Enabled = false, Held = false, Kinds = {"Floors", "Walls"}, Layers = 1, Speed = 2}
+            Effects.Noclip = Settings
+            local function Rig()
+                local Character = Player.Character
+                return Character, Character and Character:FindFirstChild("HumanoidRootPart"),
+                    Character and Character:FindFirstChildOfClass("Humanoid")
+            end
+            local function Filter(Params, ...)
+                local Entries = {}
+                for _, Item in pairs(table.pack(...)) do
+                    if typeof(Item) == "Instance" then Entries[#Entries + 1] = Item end
+                end
+                Params.FilterDescendantsInstances = Entries
+            end
+            local function VerifiedPosition(Name)
+                local Data = Storage:FindFirstChild("Players")
+                Data = Data and Data:FindFirstChild(Name)
+                local Status = Data and Data:FindFirstChild("Status")
+                local UAC = Status and Status:FindFirstChild("UAC")
+                local Position = UAC and UAC:GetAttribute("LastVerifiedPos")
+                return typeof(Position) == "Vector3" and Position or nil
+            end
+            local function Available()
+                return Alive and Effects.Active and Effects.Focused and Settings.Enabled and Settings.Held
+                    and not Library.MenuOpen and not Input:GetFocusedTextBox() and workspace.CurrentCamera ~= nil
+                    and not Effects.FreecamActive and not (Effects.Freecam.Enabled and Effects.Freecam.Held)
+                    and not Effects.BlinkActive and not (Effects.IsUndergroundActive and Effects:IsUndergroundActive())
+            end
+            local ProbeInterval = 0.05
+            local RotateDuration = 0.35
+            local ExitDuration = 0.25
+            local Reach = 3
+            local MaxThickness = 6
+            local MaxDrop = 10
+            local DwellTime = 0.25
+            local ServerTolerance = 4
+            local ServerTimeout = 4
+            local SlideRotation = CFrame.Angles(1.5707963267948966, 0, 0)
+            local ReadyColor = Color3.fromRGB(130, 255, 170)
+            local BlockedColor = Color3.fromRGB(255, 120, 120)
+            local ProgressColor = Color3.fromRGB(255, 210, 120)
+            local IdleColor = Color3.fromRGB(210, 210, 210)
+            local RayParams = RaycastParams.new()
+            RayParams.FilterType = Enum.RaycastFilterType.Exclude
+            RayParams.IgnoreWater = true
+
+            pcall(function()
+                RayParams.RespectCanCollide = true
+            end)
+
+            local Overlap = OverlapParams.new()
+            Overlap.FilterType = Enum.RaycastFilterType.Exclude
+
+            pcall(function()
+                Overlap.RespectCanCollide = true
+            end)
+
+            pcall(function()
+                Overlap.MaxParts = 8
+            end)
+
+            local OverlapFilter = {}
+
+            local ProbePart = Instance.new("Part")
+            ProbePart.Name = "Part"
+            ProbePart.Anchored = true
+            ProbePart.CanCollide = false
+            ProbePart.CanTouch = false
+            ProbePart.CanQuery = false
+            ProbePart.CastShadow = false
+            ProbePart.Transparency = 1
+            ProbePart.Size = Vector3.new(1, 1, 1)
+            ProbePart.Parent = workspace.Terrain
+
+            local function OverlapPart(u14, u15, u16, u17, u18)
+                if OverlapFilter[1] ~= u16 or OverlapFilter[2] ~= u17 or OverlapFilter[3] ~= u18 then
+                    local u4 = OverlapFilter
+                    local u6 = OverlapFilter
+                    OverlapFilter[1] = u16
+                    u4[2] = u17
+                    u6[3] = u18
+
+                    Overlap.FilterDescendantsInstances = {
+                        u16,
+                        u17,
+                        u18,
+                        workspace.Terrain,
+                    }
+                end
+
+                if ProbePart.Parent ~= workspace.Terrain then
+                    ProbePart.Parent = workspace.Terrain
+                end
+
+                ProbePart.Size = u15
+                ProbePart.CFrame = u14
+
+                for _, u4_1 in ipairs(workspace:GetPartsInPart(ProbePart, Overlap)) do
+                    local u5 = u4_1.Size
+                    if math.max(u5.X, u5.Y, u5.Z) >= 1 then
+                        return u4_1
+                    end
+                end
+            end
+
+            local function BodyObstruction(u13, u14, u15, u16)
+                local u1 = workspace:FindFirstChild("NoCollision")
+                local u3 = workspace:FindFirstChild("DroppedItems")
+                local u18 = 1
+                return OverlapPart(u14 * CFrame.new(0, (u16 - u15) / 2, 0), Vector3.new(1.2, math.max(1, u15 + u16 - 0.7), u18), u13, u1, u3)
+            end
+
+            local Gui = Instance.new("ScreenGui")
+            Gui.Name = "CinnamonNoclip"
+            Gui.ResetOnSpawn = false
+            Gui.IgnoreGuiInset = true
+            Gui.DisplayOrder = 10
+            Gui.Parent = Library.Holder.Instance.Parent
+            local Indicator = Instance.new("TextLabel")
+            Indicator.AnchorPoint = Vector2.new(0.5, 0)
+            Indicator.Position = UDim2.new(0.5, 0, 0.5, 24)
+            Indicator.Size = UDim2.fromOffset(300, 14)
+            Indicator.BackgroundTransparency = 1
+            Indicator.FontFace = Library.Font
+            Indicator.TextSize = 12
+            Indicator.TextStrokeTransparency = 0.35
+            Indicator.TextColor3 = IdleColor
+            Indicator.Text = ""
+            Indicator.Visible = false
+            Indicator.Parent = Gui
+
+            local function SetIndicator(u25, u26)
+                if Indicator.Text ~= u25 then
+                    Indicator.Text = u25
+                end
+
+                if Indicator.TextColor3 ~= u26 then
+                    Indicator.TextColor3 = u26
+                end
+            end
+
+            local Clip = nil
+            local Candidate = nil
+            local ProbeReason = nil
+            local LastProbe = 0
+            local DwellPart = nil
+            local DwellStarted = 0
+            local RequireLookAway = false
+            local CooldownUntil = 0
+
+            local function AllowsKind(u23)
+                local u22 = Settings.Kinds
+                return type(u22) ~= "table" or table.find(u22, u23) ~= nil
+            end
+
+            local function BodyDimensions(u28, u29, u30)
+                local u5 = u30.HipHeight > 0 and u30.HipHeight + u29.Size.Y / 2 or 3
+                local u4 = 0.15
+                local u1 = u28:FindFirstChild("Head")
+                local u25 = u1 and u1:IsA("BasePart")
+                local u3 = 1
+
+                if u25 then
+                    local u2 = u29.CFrame:PointToObjectSpace(u1.Position).Y
+                    u3 = u2 - u1.Size.Y / 2
+                    u4 = u2 + u1.Size.Y / 2
+                end
+
+                local u27 = math.max(0.2, u3)
+                return u5, u27, math.max(u27 + 0.5, u4)
+            end
+
+            local function FindExit(u8, u9, u10, arg4)
+                local u6 = u10 + arg4
+                local u4 = u10
+
+                for u2 = 1, 8 do
+                    local u13 = workspace:Raycast(u8 + u9 * (u4 + 0.02), u9 * math.max(0.05, u6 - u4 - 0.02), RayParams)
+                    local u11 = u13 and (u13.Position - u8):Dot(u9) - 0.02 or u6
+
+                    if u4 + 0.005 < u11 then
+                        local u16 = workspace:Raycast(u8 + u9 * u11, -u9 * (u11 - u10 + 0.01), RayParams)
+
+                        if u16 then
+                            local u18 = (u16.Position - u8):Dot(u9)
+                            if u10 + 0.01 < u18 then
+                                return u18
+                            end
+                        end
+                    end
+
+                    if not u13 then
+                        return nil
+                    end
+                    u4 = (u13.Position - u8):Dot(u9)
+                    if u6 <= u4 then
+                        return nil
+                    end
+                end
+            end
+
+            local function ScanLayers(u10, u11, u12, u13, u14, u15)
+                local u20 = 0
+                local u4 = 0
+
+                while true do
+                    local u1 = FindExit(u10, u11, u20, u12)
+
+                    if not u1 then
+                        return nil, u4 == 0 and "too thick" or "a layer below is too thick"
+                    else
+                        u4 += 1
+                        local u23 = workspace:Raycast(u10 + u11 * (u1 + 0.02), u11 * u14, RayParams)
+                        u23 = u23 and (u23.Position - u10):Dot(u11) - u1 or nil
+                        if not u23 or u23 >= u13 then
+                            return u1, u23, u4
+                        end
+
+                        if u15 <= u4 then
+                            break
+                        end
+                        u20 = u1 + u23
+                    end
+                end
+
+                return nil, ("%d+ floors thick, raise Max Floors"):format(u4 + 1)
+            end
+
+            local function Probe(u31, u32, u33)
+                if u33.Sit then
+                    return nil, "seated"
+                end
+                local u3 = workspace.CurrentCamera.CFrame
+                local u36 = u32.Position
+                local u8 = Reach
+                local u41 = workspace:FindFirstChild("NoCollision")
+                local u42 = workspace:FindFirstChild("DroppedItems")
+                Filter(RayParams, u31, u41, u42)
+                local u10, u2, u11 = BodyDimensions(u31, u32, u33)
+                local u34 = workspace:Raycast(u36, Vector3.new(0, -(u10 + 3), 0), RayParams)
+                if u33.FloorMaterial == Enum.Material.Air and not u34 then
+                    return nil, "not on the ground"
+                end
+                local u37 = workspace:Raycast(u3.Position, u3.LookVector * math.min(80, (u3.Position - u36).Magnitude + u8 + 6), RayParams)
+                if not u37 then
+                    return nil
+                end
+                local u3_1 = u32.CFrame.LookVector
+                local u1_1 = Vector3.new(u3_1.X, 0, u3_1.Z)
+                local u38_2 = CFrame.lookAt(Vector3.zero, u1_1.Magnitude > 0.001 and u1_1.Unit or Vector3.new(0, 0, -1))
+
+                local u17 = {
+                    part = u37.Instance,
+                    feet = u10,
+                    neck = u2,
+                    top = u11,
+                }
+
+                local u6 = math.max(1, math.floor(Settings.Layers))
+                local u7 = MaxThickness + 0.5
+                local u3_3 = Vector3.new(u37.Position.X - u36.X, 0, u37.Position.Z - u36.Z).Magnitude
+
+                if u37.Normal.Y > 0.5 then
+                    if u3_3 > u8 + 3 or math.abs(u37.Position.Y - u36.Y + u10) > 3 then
+                        return nil
+                    end
+
+                    if not AllowsKind("Floors") then
+                        return nil, "floors are off"
+                    end
+
+                    if not (u34 and u34.Normal.Y > 0.5) then
+                        return nil, "not standing on it"
+                    end
+                    local u40_2 = Vector3.new(0, -1, 0)
+                    u17.kind = "floor"
+                    u17.n = u40_2
+                    u17.rot = u38_2
+                    u17.surf = Vector3.new(u36.X, u34.Position.Y, u36.Z)
+                    u17.part = u34.Instance
+                    local u43 = u10 + u11 + 0.3
+                    local u39_2, u40_3, u41_1 = ScanLayers(u17.surf, u40_2, u7, u43, MaxDrop + u43 + 1, u6)
+                    if not u39_2 then
+                        return nil, u40_3
+                    end
+
+                    if not u40_3 then
+                        return nil, "drop is past Max Drop"
+                    end
+                    u17.t = u39_2
+                    u17.layers = u41_1
+                    local u43_1 = u17.surf.Y - u39_2 - u11 - 0.3
+                    u17.uEnd = u17.surf.Y - u43_1
+                    u17.final = CFrame.new(u36.X, u43_1, u36.Z) * u38_2
+                    local u30 = BodyObstruction(u31, u17.final, u10, u11)
+                    if u30 then
+                        return nil, "blocked by " .. u30.Name
+                    end
+                    return u17
+                end
+
+                if math.abs(u37.Normal.Y) < 0.6 then
+                    if u3_3 > u8 + 3 or u37.Position.Y < u36.Y - u10 - 1 or u37.Position.Y > u36.Y + u11 + 3 then
+                        return nil
+                    end
+
+                    if not AllowsKind("Walls") then
+                        return nil, "walls are off"
+                    end
+                    local u41_2 = Vector3.new(-u37.Normal.X, 0, -u37.Normal.Z)
+                    if u41_2.Magnitude < 0.001 then
+                        return nil, "too steep"
+                    end
+                    local u9 = u41_2.Unit
+                    local u5 = nil
+
+                    for _, u3_4 in ipairs({
+                        0,
+                        -u10 * 0.6,
+                        u2,
+                    }) do
+                        u5 = workspace:Raycast(u36 + Vector3.new(0, u3_4, 0), u9 * (u8 + 1.5), RayParams)
+                        if not (u5 and math.abs(u5.Normal.Y) < 0.6) then
+                            u5 = nil
+                            continue
+                        end
+                        break
+                    end
+
+                    if not u5 then
+                        return nil, "too far to reach"
+                    end
+                    local u44 = Vector3.new(-u5.Normal.X, 0, -u5.Normal.Z).Unit
+                    u17.kind = "wall"
+                    u17.n = u44
+                    u17.rot = CFrame.lookAt(Vector3.zero, u44) * SlideRotation
+                    u17.surf = u36 + u44 * (u5.Position - u36):Dot(u44)
+                    u17.part = u5.Instance
+                    local u12, u2_2, u3_5 = ScanLayers(u17.surf, u44, u7, 1.6, u11 + 3.5, u6)
+                    if not u12 then
+                        return nil, u2_2
+                    end
+                    u17.t = u12
+                    u17.layers = u3_5
+                    u17.uEnd = u12 + u11 + 0.3
+                    local u3_6 = false
+                    local u7_1 = nil
+
+                    for _, u6_1 in ipairs({ 0, 0.75, 1.5, 2.5 }) do
+                        local u1_6 = u12 + 0.9 + u6_1
+                        if u2_2 and u1_6 - u12 + 0.6 > u2_2 then
+                            break
+                        end
+                        local u8_2 = u17.surf + u44 * u1_6
+                        local u45 = workspace:Raycast(u8_2 + Vector3.new(0, 2.5, 0), Vector3.new(0, -(u10 + 7), 0), RayParams)
+                        u45 = u45 and u45.Position.Y + u10
+
+                        if u45 and u45 <= u36.Y + 2.5 and u45 >= u36.Y - 4 then
+                            local u45_1 = Vector3.new(u8_2.X, u45, u8_2.Z)
+                            local u45_2 = CFrame.lookAt(u45_1, u45_1 + u44)
+                            u7_1 = BodyObstruction(u31, u45_2, u10, u11)
+                            if not u7_1 then
+                                u17.final = u45_2
+                                return u17
+                            end
+                            continue
+                        end
+
+                        u3_6 = true
+                    end
+
+                    if u7_1 then
+                        return nil, "blocked by " .. u7_1.Name
+                    end
+                    return nil, u3_6 and "no floor behind it" or "no room behind it"
+                end
+
+                return nil, "too steep"
+            end
+
+            local function SlideFrame(u14, arg2)
+                local u4 = u14.rot
+                return CFrame.new(u14.surf + u14.n * arg2) * u4
+            end
+
+            local function SnapToGround(u10, u11, u12)
+                if not (u11 and u11.Parent) then
+                    return
+                end
+
+                if u10 then
+                    local u20 = workspace
+                    Filter(RayParams, u10, workspace:FindFirstChild("NoCollision"), u20:FindFirstChild("DroppedItems"))
+                end
+
+                local u3 = u11.Position
+                local u14 = workspace:Raycast(u3 + Vector3.new(0, 1, 0), Vector3.new(0, -256, 0), RayParams)
+                if not u14 then
+                    return
+                end
+                local u19 = u3.Y - u14.Position.Y - u12
+
+                if u19 > 0.05 then
+                    u11.CFrame = u11.CFrame - Vector3.new(0, u19, 0)
+                end
+            end
+
+            local function Stop(u2, u3)
+                local u9 = Clip
+                if not u9 then
+                    return
+                end
+                Clip = nil
+                Effects.NoclipActive = false
+                local u15, u13 = u9.character, u9.root
+
+                if u13 and u13.Parent then
+                    pcall(function()
+                        if u2 == "back" then
+                            u13.CFrame = u9.start
+                        elseif u2 == "finish" then
+                            u13.CFrame = u9.kind == "floor" and SlideFrame(u9, u9.uEnd) or u9.final
+                        end
+
+                        local v2 = u2 ~= "back"
+
+                        if v2 then
+                            v2 = u2 == "finish"
+
+                            if not v2 then
+                                v2 = (u9.phase or 0) >= 2
+                            end
+                        end
+
+                        if v2 then
+                            SnapToGround(u15, u13, u9.feet or 3)
+                            local v7 = u13.CFrame
+                            local v4 = v7.LookVector
+                            local v2_2 = Vector3.new(v4.X, 0, v4.Z)
+
+                            if v2_2.Magnitude < 0.001 then
+                                v2_2 = v7.RightVector
+                            end
+
+                            u13.CFrame = CFrame.lookAt(v7.Position, v7.Position + v2_2.Unit)
+                        end
+
+                        u13.AssemblyLinearVelocity = Vector3.zero
+                        u13.AssemblyAngularVelocity = Vector3.zero
+                    end)
+                end
+
+                for _, u6 in ipairs(u9.parts) do
+                    if u6.Parent then
+                        pcall(function()
+                            u6.CanCollide = true
+                        end)
+                    end
+                end
+
+                if u9.hum.Parent then
+                    pcall(function()
+                        u9.hum.PlatformStand = u9.stood == true
+                    end)
+                end
+
+                local u5_1 = os.clock() + 0.75
+                RequireLookAway = true
+                CooldownUntil = u5_1
+                DwellPart = nil
+
+                if u3 then
+                    Library:Notification("Noclip", u3, 3)
+                end
+            end
+
+            local function Start(u12, u13, u14, u15)
+                local u7 = u15.PlatformStand
+                u12.character, u12.root = u13, u14
+                u12.start = u14.CFrame
+                u12.hum = u15
+                u12.stood = u7
+
+                if u12.kind == "floor" then
+                    u12.u = u12.surf.Y - u14.Position.Y
+                    u12.phase = 1
+                else
+                    local u19 = -u12.feet
+                    u12.u = math.max((u14.Position - u12.surf):Dot(u12.n), u19)
+                    u12.phase = 0
+                end
+
+                local u5 = u12.u
+                local u7_1 = os.clock()
+                u12.uStart = u5
+                u12.phaseAt = u7_1
+                u12.waited = 0
+                local u2 = VerifiedPosition(Player.Name)
+                u12.uacBase = u2 and u2 - u14.Position or nil
+                u12.parts = {}
+
+                for _, u4_1 in ipairs(u13:GetDescendants()) do
+                    if u4_1:IsA("BasePart") and u4_1.CanCollide then
+                        u12.parts[#u12.parts + 1] = u4_1
+                        u4_1.CanCollide = false
+                    end
+                end
+
+                u15.PlatformStand = true
+                Clip = u12
+                Effects.NoclipActive = true
+            end
+
+            local function Advance(u20, u21)
+                local u3 = Clip
+                local u6 = os.clock()
+                local u1
+
+                if u3.phase == 0 then
+                    local u4 = math.min(1, (u6 - u3.phaseAt) / RotateDuration)
+                    u1 = u3.start:Lerp(SlideFrame(u3, u3.u), 1 - (1 - u4) ^ 4)
+
+                    if u4 >= 1 then
+                        u3.phase = 1
+                        u3.phaseAt = u6
+                    end
+                elseif u3.phase == 3 then
+                    local u5 = math.min(1, (u6 - u3.phaseAt) / ExitDuration)
+                    u1 = SlideFrame(u3, u3.uEnd):Lerp(u3.final, 1 - (1 - u5) ^ 4)
+                    if u5 >= 1 then
+                        u21.CFrame = u3.final
+                        return Stop(nil)
+                    end
+                else
+                    local u4_1 = u3.uacBase and VerifiedPosition(Player.Name)
+                    u3.held = u4_1 and (u4_1 - u21.Position - u3.uacBase).Magnitude > ServerTolerance or false
+
+                    if u3.held then
+                        u3.waited = u3.waited + u20
+                        if ServerTimeout < u3.waited then
+                            return Stop("back", "the server never caught up, put you back")
+                        end
+                    else
+                        u3.waited = 0
+                        u3.u = u3.u + math.max(0.5, Settings.Speed) * math.min(u20, 0.1)
+
+                        if u3.phase == 1 and u3.u >= u3.neck then
+                            u3.phase = 2
+                            u3.phaseAt = u6
+                        end
+
+                        if u3.phase == 2 and u3.u >= u3.uEnd then
+                            u3.u = u3.uEnd
+                            if u3.kind == "floor" then
+                                u21.CFrame = SlideFrame(u3, u3.uEnd)
+                                return Stop(nil)
+                            end
+                            u3.phase = 3
+                            u3.phaseAt = u6
+                        end
+                    end
+
+                    u1 = SlideFrame(u3, u3.u)
+                end
+
+                u21.CFrame = u1
+                u21.AssemblyLinearVelocity = Vector3.zero
+                u21.AssemblyAngularVelocity = Vector3.zero
+            end
+
+            local CollisionConnection = Library:Connect(Run.PreSimulation, function()
+                local y = Clip
+                if not y then
+                    return
+                end
+
+                for _, Part in ipairs(y.parts) do
+                    if Part.Parent and Part.CanCollide then
+                        Part.CanCollide = false
+                    end
+                end
+            end)
+
+            local UpdateConnection = nil
+
+            UpdateConnection = Library:Connect(Run.Heartbeat, function(y)
+                if not Alive then
+                    UpdateConnection.Connection:Disconnect()
+                    return
+                end
+                local q, p, T, k = Available(), Rig()
+                local P = p ~= nil and T ~= nil and k ~= nil and k.Health > 0 and not T.Anchored
+                Indicator.Visible = q and P
+
+                if Clip then
+                    if not (P and Clip.hum == k) then
+                        Stop(nil)
+                    elseif not q then
+                        Stop(Clip.phase >= 2 and "finish" or "back")
+                    elseif not pcall(Advance, y, T) then
+                        Stop("back", "stopped on an error, put you back")
+                    end
+
+                    local y = Clip
+
+                    if y then
+                        local h = math.max(0.001, y.uEnd - y.uStart)
+                        local _ = math.floor(math.clamp((y.u - y.uStart) / h, 0, 1) * 100)
+                        SetIndicator(y.held and (("CLIPPING %d%%  waiting on server"):format(_)) or (("CLIPPING %d%%"):format(_)), ProgressColor)
+                    end
+
+                    return
+                end
+
+                if not (q and P) then
+                    DwellPart = nil
+                    return
+                end
+                P = os.clock()
+
+                if P - LastProbe >= ProbeInterval then
+                    LastProbe = P
+                    local y, h, _ = pcall(Probe, p, T, k)
+                    if y then Candidate, ProbeReason = h, _
+                    else Candidate, ProbeReason = nil, "probe failed" end
+                end
+
+                if RequireLookAway then
+                    if Candidate then
+                        SetIndicator("LOOK AWAY TO CLIP AGAIN", IdleColor)
+                        return
+                    end
+                    RequireLookAway = false
+                end
+
+                if not Candidate then
+                    DwellPart = nil
+                    SetIndicator(ProbeReason and "NOT CLIPPABLE  " .. ProbeReason or "NOT CLIPPABLE", ProbeReason and BlockedColor or IdleColor)
+                    return
+                end
+
+                SetIndicator(("CLIPPABLE  %s %.1fst%s"):format(Candidate.kind, Candidate.t, (Candidate.layers or 1) > 1 and (("  %d floors"):format(Candidate.layers)) or ""), ReadyColor)
+
+                if Candidate.part ~= DwellPart then
+                    DwellPart, DwellStarted = Candidate.part, P
+                end
+
+                if P - DwellStarted >= DwellTime and P >= CooldownUntil then
+                    q = Candidate
+                    Candidate = nil
+
+                    if not pcall(Start, q, p, T, k) then
+                        Clip = q.parts and q or nil
+                        Stop("back", "could not start")
+                    end
+                end
+            end)
+
+
+            local function Reset()
+                if Clip then Stop("back") end
+                Candidate, DwellPart, ProbeReason = nil, nil, nil
+                Effects.NoclipActive = false
+                Indicator.Visible = false
+            end
+            local Section = Page:Section({Name = "Noclip", Side = 1})
+            Section:Toggle({Name = "Enabled", Flag = "NoclipEnabled", Default = false,
+                Callback = function(Value)
+                    Settings.Enabled = Value
+                    if not Value then Reset() end
+                end}):Keybind({Flag = "NoclipKeybind", Default = Enum.KeyCode.Y, Mode = "Toggle",
+                    Callback = function(Value) Settings.Held = Value == true end})
+            Section:Label("Look at a nearby floor or wall to slide through.")
+            Section:Dropdown({Name = "Clip through", Flag = "NoclipKinds", Items = {"Floors", "Walls"},
+                Default = {"Floors", "Walls"}, Multi = true,
+                Callback = function(Value) Settings.Kinds = Value end})
+            Section:Slider({Name = "Max layers", Flag = "NoclipLayers", Min = 1, Max = 4,
+                Default = 1, Decimals = 1, Callback = function(Value) Settings.Layers = Value end})
+            Section:Slider({Name = "Clip speed", Flag = "NoclipSpeed", Min = 0.5, Max = 8,
+                Default = 2, Decimals = 0.5, Suffix = " studs/s",
+                Callback = function(Value) Settings.Speed = Value end})
+            local Removing = Player.CharacterRemoving:Connect(Reset)
+            local Focus = Input.WindowFocusReleased:Connect(Reset)
+            UnloadCallbacks[#UnloadCallbacks + 1] = function()
+                Alive = false
+                UpdateConnection.Connection:Disconnect()
+                CollisionConnection.Connection:Disconnect()
+                Removing:Disconnect()
+                Focus:Disconnect()
+                Reset()
+                Gui:Destroy()
+                ProbePart:Destroy()
+                if Effects.Noclip == Settings then Effects.Noclip = nil end
+            end
+        end
+        BuildNoclip(Library, PlayerMiscPage, EffectsController, UnloadCallbacks)
+        end
         local CreateResolverController = (function()
      
      
