@@ -7040,6 +7040,9 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                             return
                         end
 
+                        Library.PlayerPriorities = Library.PlayerPriorities or {}
+                        Library.PlayerPriorities[Playerlist.Player.Name] = Value
+
                         if Value == "Neutral" then
                             Playerlist.Players[Playerlist.Player.Name].PlayerStatus:Tween(nil, {TextColor3 = Library.Theme["Text"]})
                             Playerlist.Players[Playerlist.Player.Name].PlayerStatus.Instance.Text = "Neutral"
@@ -8974,6 +8977,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
     local ESP = {
         Enabled = false,
         ForceRender = false,
+        ForceRenderMode = "Render All",
         TeamCheck = false,
         NPCsEnabled = false,
         NPCMaxDistance = 200,
@@ -9167,25 +9171,57 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
         return Connection
     end
 
-    local ForceRenderWorker, NextForceRender, ForceRenderIndex = nil, 0, 0
+    local ForceRenderWorker, NextForceRender = nil, 0
+    local ForceRenderLast = setmetatable({}, {__mode = "k"})
     ESP:ConnectRender(function()
-        if not ESP.Enabled or not ESP.ForceRender or not Workspace.StreamingEnabled
+        if not ESP.ForceRender
             or ForceRenderWorker or os.clock() < NextForceRender then return end
-        NextForceRender = os.clock() + 2
-        local Positions = {}
-        for Actor in pairs(Entries) do
-            local Character = Actor.Character
-            local Root = Character and (Character:FindFirstChild("HumanoidRootPart") or Character.PrimaryPart)
-            if Root and (typeof(Actor) == "Instance" or ESP.NPCsEnabled) then
-                Positions[#Positions + 1] = Root.Position
+        NextForceRender = os.clock() + 0.5
+        local LocalPlayer = Players.LocalPlayer
+        local Root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        local Camera = Workspace.CurrentCamera
+        if not Root or not Camera then return end
+        local DataRoot = ReplicatedStorage:FindFirstChild("Players")
+        if not DataRoot then return end
+        local Candidates, BestScore = {}, math.huge
+        local Mode = ESP.ForceRenderMode
+        for _, Target in ipairs(Players:GetPlayers()) do
+            if Target == LocalPlayer then continue end
+            local Character = Target.Character
+            if Character and Character:FindFirstChild("HumanoidRootPart") then continue end
+            local Data = DataRoot:FindFirstChild(Target.Name)
+            local Status = Data and Data:FindFirstChild("Status")
+            local UAC = Status and Status:FindFirstChild("UAC")
+            local Position = UAC and UAC:GetAttribute("LastVerifiedPos")
+            if typeof(Position) ~= "Vector3" or (Position - Root.Position).Magnitude > 12000 then continue end
+            if Mode == "Render Priority" and (not Library.PlayerPriorities
+                or Library.PlayerPriorities[Target.Name] ~= "Priority") then continue end
+            local Candidate = {Player = Target, Position = Position}
+            if Mode == "Render Target" then
+                local Point, OnScreen = Camera:WorldToViewportPoint(Position)
+                if OnScreen and Point.Z > 0 then
+                    local X, Y = Point.X - Camera.ViewportSize.X * 0.5, Point.Y - Camera.ViewportSize.Y * 0.5
+                    local Score = X * X + Y * Y
+                    if Score < BestScore then BestScore = Score; Candidates[1] = Candidate end
+                end
+            else
+                Candidates[#Candidates + 1] = Candidate
             end
         end
-        if #Positions == 0 then return end
-        ForceRenderIndex = ForceRenderIndex % #Positions + 1
-        local Position = Positions[ForceRenderIndex]
+        if #Candidates == 0 then return end
         ForceRenderWorker = task.defer(function()
-            local OK, Error = pcall(Players.LocalPlayer.RequestStreamAroundAsync, Players.LocalPlayer, Position, 1)
-            if not OK then ESP.LastStreamError = tostring(Error) end
+            for _, Candidate in ipairs(Candidates) do
+                if Unloaded or not ESP.ForceRender or ESP.ForceRenderMode ~= Mode then break end
+                local Now = tick()
+                local Last = ForceRenderLast[Candidate.Player]
+                if not Last or Now - Last > 1.5 then
+                    ForceRenderLast[Candidate.Player] = Now
+                    -- Bound the request and space requests without blocking rendering.
+                    local OK, Error = pcall(LocalPlayer.RequestStreamAroundAsync, LocalPlayer, Candidate.Position, 0.5)
+                    if not OK then ESP.LastStreamError = tostring(Error) end
+                    task.wait(0.2)
+                end
+            end
             ForceRenderWorker = nil
         end)
     end)
@@ -12345,6 +12381,7 @@ local CinnamonSuccess, CinnamonResult = xpcall(function()
                 Controller:QueueAC(Character)
             end))
             Controller:QueueAC(Player.Character)
+            print("ac has been cinnamonned")
             table.insert(Connections, ConnectScheduled(RunService.Heartbeat, function()
                 Controller:UpdateForceHitbox()
             end, 1 / 30))
@@ -26319,6 +26356,9 @@ end
                 Callback = function(Value) Library.SoundESP:SetModes(Value) end})
             Toggle(General, "Enabled", "Enabled", ESP, "Enabled")
             Toggle(General, "Force render", "ForceRender", ESP, "ForceRender")
+            General:Dropdown({Name = "Force render mode", Flag = "ESPForceRenderMode",
+                Items = {"Render All", "Render Priority", "Render Target"}, Default = ESP.ForceRenderMode,
+                Callback = function(Value) ESP.ForceRenderMode = Value end})
             Toggle(General, "Squad health HUD", "SquadHealthHUD", Library.SquadHealth, "Enabled")
             General:Toggle({
                 Name = "Reap IR vision", Flag = "VisualReapIR", Default = false,
