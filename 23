@@ -86,6 +86,26 @@
             end
         end)()
         local GameUnitsPerMeter = 3.5
+        local function AreTeammates(First, Second)
+            if not First or not Second then return false end
+            if First == Second then return true end
+            if First.Team and First.Team == Second.Team then return true end
+            local Data = game:GetService("ReplicatedStorage"):FindFirstChild("Players")
+            local function Journey(Player)
+                local Record = Data and Data:FindFirstChild(Player.Name)
+                local Status = Record and Record:FindFirstChild("Status")
+                return Status and Status:FindFirstChild("Journey")
+            end
+            local A, B = Journey(First), Journey(Second)
+            if not A or not B then return false end
+            local function Matches(FolderName, Attribute)
+                local Left, Right = A:FindFirstChild(FolderName), B:FindFirstChild(FolderName)
+                local Id = Left and Left:GetAttribute(Attribute)
+                return type(Id) == "string" and Id ~= "" and Id:lower() ~= "nil"
+                    and Right ~= nil and Right:GetAttribute(Attribute) == Id
+            end
+            return Matches("Clan", "CurrentClan") or Matches("TeleportParty", "CurrentParty")
+        end
         local function FormatDistanceSlider(Value, Suffix)
             Suffix = Suffix or ""
             if Suffix:find("studs", 1, true) then
@@ -9839,7 +9859,7 @@
                             HideESP()
                             return
                         end
-                        if ESP.TeamCheck and lplayer.Team and not IsNPC and plr.Team == lplayer.Team then
+                        if ESP.TeamCheck and not IsNPC and AreTeammates(lplayer, plr) then
                             HideESP()
                             return
                         end
@@ -9883,7 +9903,7 @@
                                 w, h = math.max(1, math.floor(w + 0.5)), math.max(1, math.floor(h + 0.5))
 
                                 
-                                if not ESP.TeamCheck or not lplayer.Team or plr.Team ~= lplayer.Team then
+                                if not ESP.TeamCheck or not AreTeammates(lplayer, plr) then
                                     Hidden = false
                                     local Alpha = not ESP.ForceRender and ESP.FadeOut.OnDistance and math.clamp(Dist / ESP.MaxDistance, 0, 0.9) or 0
                                     for _, Label in ipairs(Labels) do
@@ -10843,7 +10863,7 @@
             function Controller:IsFriendlyTarget(Character)
                 local Owner = Character and Players:GetPlayerFromCharacter(Character)
                 if not Owner then return false end
-                if Owner == Player or (Player.Team and Owner.Team == Player.Team) then return true end
+                if AreTeammates(Player, Owner) then return true end
                 local Cached = FriendCache[Owner]
                 local Now = os.clock()
                 if not Cached then Cached = {Friendly = true, NextCheck = 0}; FriendCache[Owner] = Cached end
@@ -24414,15 +24434,6 @@
                     for Key, Value in pairs(Properties) do Object[Key] = Value end
                     return Object
                 end
-                local function Party(Player)
-                    local Folder = ReplicatedStorage:FindFirstChild("Players")
-                    local Data = Folder and Folder:FindFirstChild(Player.Name)
-                    local Status = Data and Data:FindFirstChild("Status")
-                    local Journey = Status and Status:FindFirstChild("Journey")
-                    local TeleportParty = Journey and Journey:FindFirstChild("TeleportParty")
-                    local Id = TeleportParty and TeleportParty:GetAttribute("CurrentParty")
-                    return type(Id) == "string" and Id ~= "" and Id or nil
-                end
                 local function AddRow(Player)
                     local Frame = Create("Frame", {Parent = Gui, BackgroundTransparency = 1,
                         Size = UDim2.fromOffset(294, 48)})
@@ -24456,10 +24467,10 @@
                     table.clear(Members)
                     table.clear(Seen)
                     Members[1], Seen[LocalPlayer] = LocalPlayer, true
-                    local Id = Party(LocalPlayer)
+                    local Presence = Library.CinnamonPresence
                     for _, Player in ipairs(Players:GetPlayers()) do
-                        if Player ~= LocalPlayer and ((Id and Party(Player) == Id)
-                            or (not Id and LocalPlayer.Team and Player.Team == LocalPlayer.Team)) then
+                        if Player ~= LocalPlayer and (AreTeammates(LocalPlayer, Player)
+                            or Presence and Presence:IsUser(Player)) then
                             Members[#Members + 1] = Player
                             Seen[Player] = true
                         end
@@ -24477,6 +24488,9 @@
                         local Row = Rows[Player] or AddRow(Player)
                         Set(Row.Frame, "Position", UDim2.fromOffset(24, 70 + (Index - 1) * 48))
                         Set(Row.Name, "Text", Player.DisplayName)
+                        local Presence = Library.CinnamonPresence
+                        Set(Row.Name, "TextColor3", Presence and Presence:IsUser(Player)
+                            and Color3.fromRGB(234, 173, 173) or Color3.new(1, 1, 1))
                         local Character = Player.Character
                         local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
                         local Health = Humanoid and math.max(0, Humanoid.Health) or 0
@@ -24906,8 +24920,7 @@
             local Root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
             if Alive and EffectSettings.Enabled and Root then
                 for _, Player in ipairs(Players:GetPlayers()) do
-                    local Enemy = Player ~= LocalPlayer and (Player.Neutral or LocalPlayer.Neutral
-                        or not Player.Team or not LocalPlayer.Team or Player.Team ~= LocalPlayer.Team)
+                    local Enemy = not AreTeammates(LocalPlayer, Player)
                     local Model = Enemy and Player.Character
                     local Humanoid = Model and Model:FindFirstChildOfClass("Humanoid")
                     local Part = Model and Model:FindFirstChild("HumanoidRootPart")
@@ -25056,8 +25069,7 @@
             local Root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
             if Alive and Settings.Enabled and Root then
                 for _, Player in ipairs(Players:GetPlayers()) do
-                    local Enemy = Player ~= LocalPlayer and (Player.Neutral or LocalPlayer.Neutral
-                        or not Player.Team or not LocalPlayer.Team or Player.Team ~= LocalPlayer.Team)
+                    local Enemy = not AreTeammates(LocalPlayer, Player)
                     local Model = Enemy and Player.Character
                     local Humanoid = Model and Model:FindFirstChildOfClass("Humanoid")
                     local Part = Model and Model:FindFirstChild("HumanoidRootPart")
@@ -26865,23 +26877,15 @@
 
                 local Name = Part.Name:lower()
                 if Name:find("arm", 1, true) or Name:find("hand", 1, true)
-                    or Name:find("glove", 1, true) then return true end
+                    or Name:find("glove", 1, true) or Name:find("watch", 1, true) then return true end
 
-                -- Some viewmodels put gloves in a container and give the mesh parts generic names.
+                -- Clothing and watches can contain meshes with generic names (including LH).
                 local Parent = Part.Parent
                 while Parent and Parent ~= ViewModel do
                     local ParentName = Parent.Name:lower()
-                    if ParentName:find("glove", 1, true) then return true end
+                    if ParentName:find("glove", 1, true) or ParentName:find("shirt", 1, true)
+                        or ParentName:find("watch", 1, true) then return true end
                     Parent = Parent.Parent
-                end
-
-                -- This game puts the arm sleeves in a separate shirt model using RU/RL/LU/LL names.
-                if Name:match("^[rl][ul]$") then
-                    local Parent = Part.Parent
-                    while Parent and Parent ~= ViewModel do
-                        if Parent:IsA("Model") and Parent.Name:lower():find("shirt", 1, true) then return true end
-                        Parent = Parent.Parent
-                    end
                 end
                 return false
             end
