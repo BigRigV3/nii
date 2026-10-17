@@ -85,7 +85,7 @@
                 return Entry
             end
         end)()
-        local GameUnitsPerMeter = 3.5
+        local GameUnitsPerMeter = 3
         local function AreTeammates(First, Second)
             if not First or not Second then return false end
             if First == Second then return true end
@@ -9891,7 +9891,9 @@
                             local Humanoid = plr.Character:FindFirstChildOfClass("Humanoid")
                             if not Humanoid or Humanoid.Health <= 0 then HideESP() return end
                             local Pos, OnScreen = ProjectPoint(Cam, HRP.Position)
-                            local Dist = (Cam.CFrame.Position - HRP.Position).Magnitude / GameUnitsPerMeter
+                            local LocalRoot = lplayer.Character and lplayer.Character:FindFirstChild("HumanoidRootPart")
+                            local DistanceOrigin = LocalRoot and LocalRoot.Position or Cam.CFrame.Position
+                            local Dist = (DistanceOrigin - HRP.Position).Magnitude / GameUnitsPerMeter
                             UpdateChams(Dist, OnScreen)
                             local boundsCenter, w, h
                             if OnScreen and (ESP.ForceRender or Dist <= (IsNPC and ESP.NPCMaxDistance or ESP.MaxDistance)) then
