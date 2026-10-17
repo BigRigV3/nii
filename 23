@@ -13077,7 +13077,23 @@
             if EquipId == nil then return false, "Waiting for the game's equip ID" end
             -- Native equip compares this ID with GameplayVariables before marking the item equipped.
             -- Omitting it causes a three-second mismatch timeout followed by a forced unequip.
+            local ReadIdentity = getthreadidentity or getidentity
+            local WriteIdentity = setthreadidentity or setidentity
+            local Identity
+            if type(ReadIdentity) == "function" and type(WriteIdentity) == "function" then
+                local ReadOK, Value = pcall(ReadIdentity)
+                if not ReadOK then return false, tostring(Value) end
+                Identity = Value
+                -- FPS requires the item's normal game SettingsModule. A privileged UI callback
+                -- can be rejected as a RobloxScript before the grip and animations finish loading.
+                local Changed, Error = pcall(WriteIdentity, 2)
+                if not Changed then return false, tostring(Error) end
+            end
             local OK, Result = pcall(FPS.equip, FPS, Item, EquipId)
+            if Identity ~= nil then
+                local Restored, Error = pcall(WriteIdentity, Identity)
+                if not Restored then return false, tostring(Error) end
+            end
             if not OK then return false, tostring(Result) end
             if Result == false then return false, "The game deferred the skin refresh" end
             return true
