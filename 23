@@ -13069,16 +13069,33 @@
             end
             return false
         end
+        local function ReequipItem(FPS, Item)
+            local Data = FPS.rs_Player
+            local Status = Data and Data:FindFirstChild("Status")
+            local Variables = Status and Status:FindFirstChild("GameplayVariables")
+            local EquipId = Variables and Variables:GetAttribute("EquipId")
+            if EquipId == nil then return false, "Waiting for the game's equip ID" end
+            -- Native equip compares this ID with GameplayVariables before marking the item equipped.
+            -- Omitting it causes a three-second mismatch timeout followed by a forced unequip.
+            local OK, Result = pcall(FPS.equip, FPS, Item, EquipId)
+            if not OK then return false, tostring(Result) end
+            if Result == false then return false, "The game deferred the skin refresh" end
+            return true
+        end
+        local RefreshBusy, NextEquipRefresh = false, 0
         function S:Update()
-            if not self.Enabled then return end
+            if not self.Enabled or RefreshBusy then return end
             self:ApplySelections()
             local FPS = Combat:GetFPS()
             local Item = FPS and FPS.weapon
-            if Item and PendingEquip[Item] and not Busy(FPS) then
+            if Item and Item.Parent and PendingEquip[Item] and os.clock() >= NextEquipRefresh and not Busy(FPS) then
                 PendingEquip[Item] = nil
-                local OK, Error = pcall(FPS.equip, FPS, Item)
-                self.Error = not OK and tostring(Error) or nil
-                if not OK then PendingEquip[Item] = true end
+                RefreshBusy = true
+                NextEquipRefresh = os.clock() + 0.5
+                local OK, Error = ReequipItem(FPS, Item)
+                RefreshBusy = false
+                self.Error = not OK and Error or nil
+                if not OK and self.Enabled and Item.Parent then PendingEquip[Item] = true end
             end
         end
         function S:Refresh() self:Update() end
@@ -13114,7 +13131,10 @@
             end
             table.clear(Items)
             table.clear(PendingEquip)
-            if Reequip and Equipped.Parent then pcall(FPS.equip, FPS, Equipped) end
+            if Reequip and Equipped.Parent then
+                local OK, Error = ReequipItem(FPS, Equipped)
+                self.Error = not OK and Error or nil
+            end
         end
         function S:SetSelections(Value)
             if type(Value) ~= "table" then return end
