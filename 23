@@ -20,7 +20,7 @@
                     Group = {Entries = {}, Count = 0}
                     Groups[Signal] = Group
                 end
-                local Entry = {Connected = true, Callback = Callback, Interval = Interval or 0, Elapsed = 0}
+                local Entry = {Connected = true, Callback = Callback, Interval = Interval or 0, Elapsed = 0, Accumulator = 0}
                 Entry.Worker = coroutine.create(function(Delta)
                     while Entry.Connected do
                         Entry.Busy = true
@@ -61,9 +61,12 @@
                             local Current = Entries[Index]
                             if Current and Current.Connected then
                                 Current.Elapsed += Delta
-                                if not Current.Busy and Current.Elapsed >= Current.Interval then
+                                Current.Accumulator += Delta
+                                if not Current.Busy and Current.Accumulator >= Current.Interval then
                                     local Elapsed = Current.Elapsed
                                     Current.Elapsed = 0
+                                    -- Preserve interval phase without passing leftover time twice to callbacks.
+                                    Current.Accumulator = Current.Interval > 0 and Current.Accumulator % Current.Interval or 0
                                     coroutine.resume(Current.Worker, Elapsed)
                                 end
                             end
@@ -86,6 +89,13 @@
             end
         end)()
         local GameUnitsPerMeter = 3
+        -- Transmission positions observed in-game; live objects take priority when streamed in.
+        local QuestSearchAreas = {
+            ["Estonian Border"] = {
+                Transmission1 = {Position = Vector3.new(2649.8621, 140.5030, -2004.7510), Grid = "H22"},
+                Transmission2 = {Position = Vector3.new(-2139.8223, 46.1436, -965.8295), Grid = "K4"},
+            },
+        }
         local function AreTeammates(First, Second)
             if not First or not Second then return false end
             if First == Second then return true end
@@ -120,6 +130,12 @@
             if Cache.MarkerX == X and Cache.MarkerY == Y then return end
             Marker.Position = UDim2.fromOffset(X, Y)
             Cache.MarkerX, Cache.MarkerY = X, Y
+        end
+        local function UpdateMarkerText(Label, Name, Meters, ShowDistance, Cache)
+            local Rounded = ShowDistance and math.floor(Meters + 0.5) or false
+            if Cache.LabelName == Name and Cache.LabelMeters == Rounded then return end
+            Cache.LabelName, Cache.LabelMeters = Name, Rounded
+            Label.Text = Rounded and string.format("%s [%d meters]", Name, Rounded) or Name
         end
         local LoaderTransition = getgenv().CinnamonLoaderTransition
         local function ReportLoadingProgress(Amount, Message)
@@ -9311,6 +9327,13 @@
         local Entries = {}
         local BodyParts = setmetatable({}, {__mode = "k"})
         local NPCAdapters, NPCSerial = {}, 0
+        local AimCharacters = setmetatable({}, {__mode = "k"})
+        local function AimCharacter(Character)
+            if not Character then return end
+            local Entry = NPCAdapters[Character] or AimCharacters[Character]
+            if not Entry then Entry = {Parts = {}}; AimCharacters[Character] = Entry end
+            return Entry
+        end
         local AimPlayers, AimPlayersDirty = {}, true
         function ESP:GetAimPlayers()
             if AimPlayersDirty then
@@ -9324,14 +9347,14 @@
         end
         function ESP:GetAimNPCs() return NPCAdapters end
         function ESP:GetAimHumanoid(Character)
-            local Entry = NPCAdapters[Character]
-            if not Entry then return Character and Character:FindFirstChildOfClass("Humanoid") end
+            local Entry = AimCharacter(Character)
+            if not Entry then return end
             if not Entry.Humanoid or Entry.Humanoid.Parent ~= Character then Entry.Humanoid = Character:FindFirstChildOfClass("Humanoid") end
             return Entry.Humanoid
         end
         function ESP:GetAimPart(Character, Name)
-            local Entry = NPCAdapters[Character]
-            if not Entry then return Character and Character:FindFirstChild(Name) end
+            local Entry = AimCharacter(Character)
+            if not Entry then return end
             local Part = Entry.Parts[Name]
             if not Part or Part.Parent ~= Character then Part = Character:FindFirstChild(Name); Entry.Parts[Name] = Part end
             return Part
@@ -9344,6 +9367,7 @@
         local RenderBound = false
         local FrameState = {BoxAngle = -45}
         local VisibilityParams = RaycastParams.new()
+        local VisibilityRaycast = Workspace.Raycast
         VisibilityParams.FilterType = Enum.RaycastFilterType.Exclude
         VisibilityParams.IgnoreWater = true
         local VisibilityParts = {"Head", "UpperTorso", "HumanoidRootPart"}
@@ -9356,6 +9380,8 @@
             FrameState.Scale = FrameState.CenterY / math.tan(math.rad(Camera.FieldOfView) * 0.5)
             FrameState.Frame = Camera.CFrame
             local Character = Players.LocalPlayer.Character
+            local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+            FrameState.DistanceOrigin = Root and Root.Position or Camera.CFrame.Position
             local NoCollision = Workspace:FindFirstChild("NoCollision")
             if FrameState.FilterCamera ~= Camera or FrameState.FilterCharacter ~= Character or FrameState.FilterEffects ~= NoCollision then
                 local Excluded = {Camera}
@@ -9478,6 +9504,7 @@
             end
             table.clear(self.Connections)
             table.clear(BodyParts)
+            table.clear(AimCharacters)
             for Player, Entry in pairs(Entries) do
                 Entry.Connection:Disconnect()
                 if Entry.Cleanup then Entry.Cleanup() end
@@ -9523,7 +9550,7 @@
                     local Part = Character:FindFirstChild(PartName)
                     if Part and Part:IsA("BasePart") then
                         local Origin = FrameState.Frame.Position
-                        local Hit = Workspace:Raycast(Origin, Part.Position - Origin, VisibilityParams)
+                        local Hit = VisibilityRaycast(Workspace, Origin, Part.Position - Origin, VisibilityParams)
                         if not Hit or Hit.Instance:IsDescendantOf(Character) then return true end
                     end
                 end
@@ -9557,7 +9584,7 @@
                 
                 local CenterX, CenterY = FrameState.CenterX, FrameState.CenterY
                 local Scale, CameraFrame = FrameState.Scale, FrameState.Frame
-                local Root = ESP:GetNPCRoot(Character, Character:FindFirstChildOfClass("Humanoid"))
+                local Root = ESP:GetNPCRoot(Character, ESP:GetAimHumanoid(Character))
                 if not Root then return nil end
                 if not Cache.BoundsSize or Now >= (Cache.NextBounds or 0) then
                     local Low, High = Vector3.new(math.huge, math.huge, math.huge), Vector3.new(-math.huge, -math.huge, -math.huge)
@@ -9883,16 +9910,15 @@
                         local Detector = ESP.ModDetector
                         local Invisible = not IsNPC and Detector and Detector.Invisible[plr]
                         if Invisible and Detector.InvisibleESP == "Hide" then HideESP(); return end
-                        local HRP = Character and (IsNPC and ESP:GetNPCRoot(Character, plr.Humanoid) or Character:FindFirstChild("HumanoidRootPart"))
+                        local HRP = Character and (IsNPC and ESP:GetNPCRoot(Character, plr.Humanoid) or ESP:GetAimPart(Character, "HumanoidRootPart"))
                         if HRP then
                             local LabelName = IsNPC and ((plr.IsBoss and "Boss - " or "NPC - ") .. plr.DisplayName) or plr.Name
                             if not IsNPC and Detector and (Detector.Staff[plr]
                                 or (Invisible and Detector.InvisibleESP == "Label mod")) then LabelName = "[MOD] " .. LabelName end
-                            local Humanoid = plr.Character:FindFirstChildOfClass("Humanoid")
+                            local Humanoid = ESP:GetAimHumanoid(Character)
                             if not Humanoid or Humanoid.Health <= 0 then HideESP() return end
                             local Pos, OnScreen = ProjectPoint(Cam, HRP.Position)
-                            local LocalRoot = lplayer.Character and lplayer.Character:FindFirstChild("HumanoidRootPart")
-                            local DistanceOrigin = LocalRoot and LocalRoot.Position or Cam.CFrame.Position
+                            local DistanceOrigin = FrameState.DistanceOrigin
                             local Dist = (DistanceOrigin - HRP.Position).Magnitude / GameUnitsPerMeter
                             UpdateChams(Dist, OnScreen)
                             local boundsCenter, w, h
@@ -9905,7 +9931,7 @@
                                 w, h = math.max(1, math.floor(w + 0.5)), math.max(1, math.floor(h + 0.5))
 
                                 
-                                if not ESP.TeamCheck or not AreTeammates(lplayer, plr) then
+                                do
                                     Hidden = false
                                     local Alpha = not ESP.ForceRender and ESP.FadeOut.OnDistance and math.clamp(Dist / ESP.MaxDistance, 0, 0.9) or 0
                                     for _, Label in ipairs(Labels) do
@@ -10200,8 +10226,6 @@
                                             end
                                         end
                                     end                            
-                                else
-                                    HideESP();
                                 end
                             else
                                 HideESP(true);
@@ -10210,7 +10234,15 @@
                             HideESP();
                         end
                     end, true)
-                    Entries[plr] = {Connection = Connection, Gui = ScreenGui, Cleanup = DestroyOcclusion}
+                    local function ClearCharacter(Character)
+                        if Character then AimCharacters[Character], BodyParts[Character] = nil, nil end
+                    end
+                    local CharacterConnection = not IsNPC and plr.CharacterRemoving:Connect(ClearCharacter)
+                    Entries[plr] = {Connection = Connection, Gui = ScreenGui, Cleanup = function()
+                        DestroyOcclusion()
+                        ClearCharacter(plr.Character)
+                        if CharacterConnection then CharacterConnection:Disconnect() end
+                    end}
                     AimPlayersDirty = true
                 end
                 coroutine.wrap(Updater)();
@@ -10581,7 +10613,7 @@
                     ForceHeadshots = true, HSRTargeting = false, InstantBullet = false, InstantHit = false,
                     NoSway = false, NoBobbing = false, NoSprintAnimation = false, AlwaysSprint = false,
                     FullAuto = false, NoObstruction = false, InstantAim = false, InstantEquip = false, KeepEquipAnimation = false,
-                    SprintShooting = false, AutoFill = false, PacketReload = false,
+                    SprintShooting = false, SprintADS = false, AutoFill = false, PacketReload = false,
                     AutoReload = false, ReloadThreshold = 0},
                 FOVStyle = {Gradient = true, Glow = true, AnimateGradient = true, AnimateGlow = true,
                     AnimateVisibility = true, FadeTime = 0.2,
@@ -10598,6 +10630,8 @@
             local ReloadBusy, FillBusy, ReloadQueued = false, false, false
             local ReloadFocused = true
             local Shots = {}
+            local RecentShots = {}
+            local ProjectileCasts = setmetatable({}, {__mode = "k"})
             local BulletContext
             local ReportingHit = false
             local SpringWrappers = {}
@@ -10859,7 +10893,7 @@
 
             function Controller:GetPlayerTargets()
                 local Tracker = self.ESP
-                return Tracker and Tracker.Enabled and Tracker:GetAimPlayers() or Players:GetPlayers()
+                return Tracker and Tracker:GetAimPlayers() or Players:GetPlayers()
             end
             local FriendCache = setmetatable({}, {__mode = "k"})
             function Controller:IsFriendlyTarget(Character)
@@ -10913,142 +10947,147 @@
             end
         
             local NextTargetUpdate = 0
-            local TargetVisibility = setmetatable({}, {__mode = "k"})
+            local TargetVisibility = setmetatable({}, {__mode = "kv"})
+            local TargetParams = RaycastParams.new()
+            local TargetRaycast = workspace.Raycast
+            TargetParams.FilterType = Enum.RaycastFilterType.Exclude
+            TargetParams.CollisionGroup = "WeaponRay"
+            local TargetFilterCamera, TargetFilterCharacter, TargetFilterEffects
+            local TargetCandidates, RankedTargets, TargetRecords = {}, {}, setmetatable({}, {__mode = "kv"})
+            local function TargetOrder(A, B)
+                if A.Score ~= B.Score then return A.Score < B.Score end
+                if A.Screen ~= B.Screen then return A.Screen < B.Screen end
+                return A.Order < B.Order
+            end
             function Controller:IsTargetVisible(Origin, Part, Character, Params, Force)
-                local Now = os.clock()
+                local Now, Position = os.clock(), Part.Position
                 local Cached = TargetVisibility[Part]
-                if not Force and Cached and Cached.Character == Character and Now - Cached.Time < 0.1
-                    and (Cached.Origin - Origin).Magnitude < 1 and (Cached.Position - Part.Position).Magnitude < 0.5 then
+                if not Force and Cached and Cached.Character == Character and Now - Cached.Time < 1 / 60
+                    and (Cached.Origin - Origin).Magnitude < 0.25 and (Cached.Position - Position).Magnitude < 0.1 then
                     return Cached.Visible
                 end
-                local Hit = workspace:Raycast(Origin, Part.Position - Origin, Params)
+                local Hit = TargetRaycast(workspace, Origin, Position - Origin, Params)
                 local Visible = not Hit or Hit.Instance:IsDescendantOf(Character)
-                TargetVisibility[Part] = {Origin = Origin, Position = Part.Position, Character = Character, Time = Now, Visible = Visible}
+                if not Cached then Cached = {}; TargetVisibility[Part] = Cached end
+                Cached.Origin, Cached.Position, Cached.Character, Cached.Time, Cached.Visible = Origin, Position, Character, Now, Visible
                 return Visible
             end
             function Controller:SelectTarget(Force)
                 if Library.DeferConfigWork and Library:DeferConfigWork("CombatTarget", function() self:SelectTarget(true) end) then return end
                 local Now = os.clock()
                 if not Testing and not Force and Now < NextTargetUpdate then return self:GetTarget() end
-                NextTargetUpdate = Now + 1 / 30
+                if not Force and Now >= NextTargetUpdate and Now - NextTargetUpdate < 1 / 60 then
+                    NextTargetUpdate += 1 / 60
+                else
+                    NextTargetUpdate = Now + 1 / 60
+                end
                 self.Target, self.Part = nil, nil
                 local Camera = workspace.CurrentCamera
                 if not Camera then return end
-                local Origin = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
-                Origin = Origin and Origin.Position or Camera.CFrame.Position
+                local LocalCharacter, CameraFrame = Player.Character, Camera.CFrame
+                local Root = LocalCharacter and LocalCharacter:FindFirstChild("HumanoidRootPart")
+                local Origin = Root and Root.Position or CameraFrame.Position
                 local Center = self.Aim.FOVOrigin == "Mouse" and Input:GetMouseLocation() or Camera.ViewportSize / 2
-                local BestScore, BestScreenDistance = math.huge, math.huge
-                local BestVisibleScore, BestVisibleScreen = math.huge, math.huge
-                local BestVisibleTarget, BestVisiblePart
-                local BestHiddenScore, BestHiddenScreen = math.huge, math.huge
-                local BestHiddenTarget, BestHiddenPart
-                local Params = RaycastParams.new()
-                Params.FilterType = Enum.RaycastFilterType.Exclude
-                Params.CollisionGroup = "WeaponRay"
-                local Excluded = {Camera}
-                if Player.Character then table.insert(Excluded, Player.Character) end
                 local NoCollision = workspace:FindFirstChild("NoCollision")
-                if NoCollision then table.insert(Excluded, NoCollision) end
-                Params.FilterDescendantsInstances = Excluded
-                local ShotOrigin = self:GetShotOrigin() or Camera.CFrame.Position
-                local Candidates = self.Aim.Players and table.clone(self:GetPlayerTargets()) or {}
+                if TargetFilterCamera ~= Camera or TargetFilterCharacter ~= LocalCharacter or TargetFilterEffects ~= NoCollision then
+                    local Excluded = {Camera}
+                    if LocalCharacter then Excluded[#Excluded + 1] = LocalCharacter end
+                    if NoCollision then Excluded[#Excluded + 1] = NoCollision end
+                    TargetParams.FilterDescendantsInstances = Excluded
+                    TargetFilterCamera, TargetFilterCharacter, TargetFilterEffects = Camera, LocalCharacter, NoCollision
+                end
+                table.clear(TargetCandidates)
+                table.clear(RankedTargets)
+                if self.Aim.Players then
+                    for _, Candidate in ipairs(self:GetPlayerTargets()) do TargetCandidates[#TargetCandidates + 1] = Candidate end
+                end
                 if self.Aim.NPCs and self.NPCController then
                     for Model in pairs(self:GetNPCTargets()) do
-                        if not self.HelicopterController or not self.HelicopterController:IsHelicopter(Model) then table.insert(Candidates, Model) end
-                    end
-                end
-                if self.Aim.Helicopters and self.HelicopterController then
-                    for Model in pairs(self.HelicopterController:GetModels()) do table.insert(Candidates, Model) end
-                end
-                local Rage360 = self.Rage.FOV360 and self:IsRageActive()
-                for _, Candidate in ipairs(Candidates) do
-                    local Character = self:GetTargetCharacter(Candidate)
-                    if self:IsCinnamonTarget(Character) then continue end
-                    if self.Aim.FriendlyCheck and self:IsFriendlyTarget(Character) then continue end
-                    local Bone = self:GetAimBone(Character)
-                    local Humanoid = self:GetAimHumanoid(Character)
-                    local Part = self:GetAimPart(Character, Bone)
-                    local Helicopter = self.HelicopterController and Character and self.HelicopterController:IsHelicopter(Character)
-                    if Helicopter then Part = self.HelicopterController:GetAimPart(Character, Camera.CFrame.Position) end
-                    if not Part and Character and Bone == "UpperTorso" then Part = Character:FindFirstChild("Torso") end
-                    if Candidate ~= Player and Humanoid and Humanoid.Health > 0 and Part and Part:IsA("BasePart") then
-                        local Point, OnScreen = Camera:WorldToViewportPoint(Part.Position)
-                        local ScreenDistance = (Vector2.new(Point.X, Point.Y) - Center).Magnitude
-                        local Distance = (Part.Position - Origin).Magnitude
-                        local InFOV = Rage360 or (OnScreen and Point.Z > 0 and ScreenDistance <= self.Aim.FOV)
-                        local MaxDistance = self:IsRageActive() and self.Rage.Distance or self.Aim.Distance
-                        if InFOV and Distance <= MaxDistance then
-                            local Priority = self.Aim.Priority
-                            local VisiblePriority = Priority == "Closest visible to crosshair"
-                            local PlayerDistancePriority = Priority == "Closest visible to player"
-                            local Score = ScreenDistance
-                            if Rage360 then
-                                local Direction = Part.Position - Camera.CFrame.Position
-                                Score = Direction.Magnitude > 0 and (1 - Camera.CFrame.LookVector:Dot(Direction.Unit)) * 1000 or 0
-                            end
-                            if Priority == "Closest distance" or PlayerDistancePriority then Score = Distance end
-                            if Priority == "Lowest health" then Score = Humanoid.Health end
-                            if Helicopter and self.HelicopterController.Prioritize then Score -= 1000000 end
-                            local Better = Score < BestScore or (Score == BestScore and ScreenDistance < BestScreenDistance)
-                            if VisiblePriority or PlayerDistancePriority then
-                                                                                        
-                                                                                            
-                                                                                            
-                                if Score < BestVisibleScore or (Score == BestVisibleScore and ScreenDistance < BestVisibleScreen) then
-                                    local Visible = self:IsTargetVisible(ShotOrigin, Part, Character, Params, Force)
-                                    if PlayerDistancePriority and not Visible and self:IsManipulationActive() then
-                                        Visible = self:FindManipulationOrigin(Camera.CFrame.Position, Part) ~= nil
-                                    end
-                                    if not Visible and (self:IsHitscanActive() or self:IsMagicBulletActive() or self:IsRageActive()) then
-                                        Visible = self:FindShotSolution(self:GetShotOrigin() or Camera.CFrame.Position, Part, LiveFPS) ~= nil
-                                    end
-                                    if Visible then
-                                        if Score < BestVisibleScore or (Score == BestVisibleScore and ScreenDistance < BestVisibleScreen) then
-                                            BestVisibleScore, BestVisibleScreen = Score, ScreenDistance
-                                            BestVisibleTarget, BestVisiblePart = Candidate, Part
-                                        end
-                                    elseif Score < BestHiddenScore or (Score == BestHiddenScore and ScreenDistance < BestHiddenScreen) then
-                                        BestHiddenScore, BestHiddenScreen = Score, ScreenDistance
-                                        BestHiddenTarget, BestHiddenPart = Candidate, Part
-                                    end
-                                end
-                            else
-                                local Visible = true
-                                if self.Aim.VisCheck or self:IsRageActive() then
-                                    if Better or VisiblePriority then
-                                        Visible = self:IsTargetVisible(ShotOrigin, Part, Character, Params, Force)
-                                        if not Visible and self:IsManipulationActive() then
-                                            Visible = self:FindManipulationOrigin(Camera.CFrame.Position, Part) ~= nil
-                                        end
-                                        if not Visible and self:IsRageActive() and self.Rage.Wallbang then
-                                            Visible = self:IsWallbangable(self:GetShotOrigin() or Camera.CFrame.Position, Part, LiveFPS)
-                                        end
-                                        if not Visible and (self:IsHitscanActive() or self:IsMagicBulletActive()) then
-                                            Visible = self:FindShotSolution(self:GetShotOrigin() or Camera.CFrame.Position, Part, LiveFPS) ~= nil
-                                        end
-                                    else
-                                        Visible = false
-                                    end
-                                end
-                                if Visible and Better then
-                                    BestScore, BestScreenDistance = Score, ScreenDistance
-                                    self.Target, self.Part = Candidate, Part
-                                end
-                            end
+                        if not self.HelicopterController or not self.HelicopterController:IsHelicopter(Model) then
+                            TargetCandidates[#TargetCandidates + 1] = Model
                         end
                     end
                 end
-                if self.Aim.Priority == "Closest visible to player" or self.Aim.Priority == "Closest visible to crosshair" then
-                    self.Target, self.Part = BestVisibleTarget or BestHiddenTarget, BestVisiblePart or BestHiddenPart
+                if self.Aim.Helicopters and self.HelicopterController then
+                    for Model in pairs(self.HelicopterController:GetModels()) do TargetCandidates[#TargetCandidates + 1] = Model end
                 end
+                local Rage = self:IsRageActive()
+                local Rage360 = self.Rage.FOV360 and Rage
+                local Priority = self.Aim.Priority
+                local VisiblePriority = Priority == "Closest visible to crosshair"
+                local PlayerDistancePriority = Priority == "Closest visible to player"
+                local MaxDistance = Rage and self.Rage.Distance or self.Aim.Distance
+                local DistanceLimit, FOVLimit = MaxDistance * MaxDistance, self.Aim.FOV * self.Aim.FOV
+                for Index, Candidate in ipairs(TargetCandidates) do
+                    if Candidate == Player then continue end
+                    local Character = self:GetTargetCharacter(Candidate)
+                    local Humanoid = self:GetAimHumanoid(Character)
+                    if not Humanoid or Humanoid.Health <= 0 then continue end
+                    local Bone = self:GetAimBone(Character)
+                    local Part = self:GetAimPart(Character, Bone)
+                    local Helicopter = self.HelicopterController and Character and self.HelicopterController:IsHelicopter(Character)
+                    if Helicopter then Part = self.HelicopterController:GetAimPart(Character, CameraFrame.Position) end
+                    if not Part and Character and Bone == "UpperTorso" then Part = Character:FindFirstChild("Torso") end
+                    if not Part or not Part:IsA("BasePart") then continue end
+                    local Position = Part.Position
+                    local Offset = Position - Origin
+                    local SquaredDistance = Offset:Dot(Offset)
+                    if SquaredDistance > DistanceLimit then continue end
+                    local Point, OnScreen = Camera:WorldToViewportPoint(Position)
+                    local X, Y = Point.X - Center.X, Point.Y - Center.Y
+                    local ScreenSquared = X * X + Y * Y
+                    if not Rage360 and (not OnScreen or Point.Z <= 0 or ScreenSquared > FOVLimit) then continue end
+                    if self:IsCinnamonTarget(Character) then continue end
+                    if self.Aim.FriendlyCheck and self:IsFriendlyTarget(Character) then continue end
+                    local ScreenDistance = math.sqrt(ScreenSquared)
+                    local Score = ScreenDistance
+                    if Rage360 then
+                        local Direction = Position - CameraFrame.Position
+                        Score = Direction.Magnitude > 0 and (1 - CameraFrame.LookVector:Dot(Direction.Unit)) * 1000 or 0
+                    end
+                    if Priority == "Closest distance" or PlayerDistancePriority then Score = math.sqrt(SquaredDistance) end
+                    if Priority == "Lowest health" then Score = Humanoid.Health end
+                    if Helicopter and self.HelicopterController.Prioritize then Score -= 1000000 end
+                    local Record = TargetRecords[Candidate]
+                    if not Record then Record = {}; TargetRecords[Candidate] = Record end
+                    Record.Candidate, Record.Character, Record.Part = Candidate, Character, Part
+                    Record.Score, Record.Screen, Record.Order = Score, ScreenDistance, Index
+                    RankedTargets[#RankedTargets + 1] = Record
+                end
+                -- Rank geometry first; only solve visibility for candidates that can win.
+                table.sort(RankedTargets, TargetOrder)
+                local ShotOrigin = self:GetShotOrigin() or CameraFrame.Position
+                local Manipulation, Hitscan, Magic = self:IsManipulationActive(), self:IsHitscanActive(), self:IsMagicBulletActive()
+                local NeedsVisibility = VisiblePriority or PlayerDistancePriority or self.Aim.VisCheck or Rage
+                for _, Record in ipairs(RankedTargets) do
+                    local Part, Character = Record.Part, Record.Character
+                    local Visible = not NeedsVisibility or self:IsTargetVisible(ShotOrigin, Part, Character, TargetParams, Force)
+                    if not Visible and Manipulation and (not VisiblePriority or PlayerDistancePriority) then
+                        Visible = self:FindManipulationOrigin(CameraFrame.Position, Part) ~= nil
+                    end
+                    if not Visible then
+                        if VisiblePriority or PlayerDistancePriority then
+                            if Hitscan or Magic or Rage then Visible = self:FindShotSolution(ShotOrigin, Part, LiveFPS) ~= nil end
+                        else
+                            if Rage and self.Rage.Wallbang then Visible = self:IsWallbangable(ShotOrigin, Part, LiveFPS) end
+                            if not Visible and (Hitscan or Magic) then Visible = self:FindShotSolution(ShotOrigin, Part, LiveFPS) ~= nil end
+                        end
+                    end
+                    if Visible then self.Target, self.Part = Record.Candidate, Part; break end
+                end
+                if not self.Target and (VisiblePriority or PlayerDistancePriority) and RankedTargets[1] then
+                    self.Target, self.Part = RankedTargets[1].Candidate, RankedTargets[1].Part
+                end
+                table.clear(TargetCandidates)
+                table.clear(RankedTargets)
                 return self.Target, self.Part
             end
-        
+
             function Controller:GetTarget()
                 local Character = self:GetTargetCharacter(self.Target)
                 if self:IsCinnamonTarget(Character) then return end
                 if self.Aim.FriendlyCheck and self:IsFriendlyTarget(Character) then return end
-                local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+                local Humanoid = self:GetAimHumanoid(Character)
                 if self.Target and self.Target.Parent and Character and self.Part and Humanoid and Humanoid.Health > 0
                     and self.Part:IsDescendantOf(Character) then
                     if self.HelicopterController and self.HelicopterController:IsHelicopter(Character)
@@ -11218,9 +11257,28 @@
                     return {Origin = Origin, Part = Part, Kind = "Autowall", ForceHit = true}
                 end
             end
-            function Controller:GetProjectileCast(Origin, Direction)
+            function Controller:GetProjectileCast(Origin, Direction, Params)
                 if not self.Active then return Origin, Direction end
-                local Solution = self.ProjectileSolution
+                if typeof(Origin) ~= "Vector3" or typeof(Direction) ~= "Vector3"
+                    or Direction.Magnitude <= 0.001 or typeof(Params) ~= "RaycastParams" then return Origin, Direction end
+                local Shot = ProjectileCasts[Params]
+                if Shot == nil then
+                    -- Native bullets each own raycast parameters; bind once, never use the latest shot's target.
+                    local Newest = -math.huge
+                    local Now, UnitDirection = os.clock(), Direction.Unit
+                    for _, Candidate in pairs(RecentShots) do
+                        if Candidate.Origin and typeof(Candidate.Direction) == "Vector3"
+                            and Candidate.Direction.Magnitude > 0.001 and Now - Candidate.Created <= 2
+                            and (Candidate.Origin - Origin).Magnitude <= 0.5
+                            and Candidate.Direction.Unit:Dot(UnitDirection) >= 0.9999
+                            and Candidate.Created > Newest then
+                            Shot, Newest = Candidate, Candidate.Created
+                        end
+                    end
+                    ProjectileCasts[Params] = Shot or false
+                end
+                if not Shot or Shot.NaturalReported or Shot.Reported then return Origin, Direction end
+                local Solution = Shot.Solution
                 local Enabled = Solution and ((Solution.Kind == "Hitscan" and self:IsHitscanActive())
                     or (Solution.InstantHit and self.Mods.InstantHit and self:IsAimActive())
                     or (Solution.Kind == "Magic Bullet" and self:IsMagicBulletActive())
@@ -11232,22 +11290,27 @@
                     if Humanoid and Humanoid.Health > 0 then
                         if Solution.ForceHit then
                             -- Never report a collision beyond this projectile's current step.
-                            -- The solution is shared, so unrelated/older trajectories must stay native.
+                            -- Keep impact positions on this bullet's own trajectory.
                             local Offset = Part.Position - Origin
                             local Length = typeof(Direction) == "Vector3" and Direction.Magnitude or 0
                             if Offset.Magnitude > 0.001 and Length > 0.001
                                 and Direction.Unit:Dot(Offset.Unit) > 0 then
-                                local Params = RaycastParams.new()
-                                Params.FilterType = Enum.RaycastFilterType.Include
-                                Params.FilterDescendantsInstances = {Part}
-                                Params.CollisionGroup = "WeaponRay"
+                                local Params = Shot.HitParams
+                                if not Params or Shot.HitPart ~= Part then
+                                    Params = RaycastParams.new()
+                                    Params.FilterType = Enum.RaycastFilterType.Include
+                                    Params.FilterDescendantsInstances = {Part}
+                                    Params.CollisionGroup = "WeaponRay"
+                                    Shot.HitParams, Shot.HitPart = Params, Part
+                                end
                                 local Segment = self.Mods.InstantBullet and Direction.Unit * 4000 or Direction
                                 local Hit = Cast(Origin, Segment, Params)
                                 if Hit then return Origin, Direction, Hit end
                             end
                             return Origin, Direction
                         end
-                        Origin, Direction = Solution.Origin, Part.Position - Solution.Origin
+                        -- The native bullet already starts at the selected origin and aim direction.
+                        -- Replacing every step with the full origin-to-target ray creates floating impacts.
                     end
                 end
                 if self.Mods.InstantBullet and typeof(Direction) == "Vector3" and Direction.Magnitude > 0 then
@@ -11390,9 +11453,13 @@
                 self:InvalidateShotSolutions()
                 self.Manipulated, self.ManipulatedOrigin = false, nil
             end
+            local NextManipulationPreview = 0
             function Controller:UpdateManipulation()
+                local Active = self:IsManipulationActive() or self:IsHitscanActive() or self:IsMagicBulletActive()
+                if Active and os.clock() < NextManipulationPreview then return end
+                NextManipulationPreview = Active and os.clock() + 1 / 60 or 0
                 self.Manipulated, self.ManipulatedOrigin, self.ShotKind = false, nil, nil
-                if not (self:IsManipulationActive() or self:IsHitscanActive() or self:IsMagicBulletActive()) then return end
+                if not Active then return end
                 local _, Part = self:GetTarget()
                 local Origin = self:GetShotOrigin()
                 local Solution = Part and Origin and self:FindShotSolution(Origin, Part, LiveFPS)
@@ -11768,10 +11835,13 @@
             end
 
             local AutoSprintState
+            local SprintADSRequests = setmetatable({}, {__mode = "k"})
+            local SprintADSTransition
             local SprintAnimationWeights = setmetatable({}, {__mode = "k"})
             local SprintPoseStates = setmetatable({}, {__mode = "k"})
             local function UpdateSprintAnimation(State)
-                if Controller.Active and Controller.Mods.NoSprintAnimation and State
+                if Controller.Active and State and (Controller.Mods.NoSprintAnimation
+                    or Controller.Mods.SprintADS and State.isAiming)
                     and State.player == Player and State.character == Player.Character then
                     -- Weapon lowering is a separate pose blend, not the Sprint animation track.
                     SprintPoseStates[State] = true
@@ -11819,6 +11889,7 @@
                 end
             end
             function Controller:UpdateSprintMods(State)
+                self:UpdateSprintADS(State)
                 local Character = Player.Character
                 local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
                 local Available = self.Active and State and State.player == Player
@@ -11833,7 +11904,7 @@
                 if Sprint and Available and type(State.sprint) == "function" then
                     AutoSprintState = State
                     State.SprintButtonHeld = true
-                    if not State.sprinting and not State.isAiming and not State.reloading
+                    if not State.sprinting and (not State.isAiming or self.Mods.SprintADS) and not State.reloading
                         and Humanoid.MoveDirection.Magnitude > 0.05
                         and State.ActionButtonHeld == false and State.AltActionButtonHeld == false then
                         State.sprinting = false
@@ -11842,6 +11913,28 @@
                 end
 
                 UpdateSprintAnimation(Available and State or nil)
+            end
+            function Controller:UpdateSprintADS(State)
+                if not self.Active or not self.Mods.SprintADS then
+                    for Saved in pairs(SprintADSRequests) do
+                        SprintADSRequests[Saved] = nil
+                        if Saved.isAiming and Saved.sprinting and type(Saved.sprint) == "function" then
+                            Saved:sprint(false, true)
+                        end
+                    end
+                    return
+                end
+                if not State or not SprintADSRequests[State] or State.player ~= Player
+                    or State.character ~= Player.Character or not State.isAiming then return end
+                local Humanoid = State.humanoid
+                if Library.MenuOpen or Library.Spectating or Input:GetFocusedTextBox() or not ManipulationFocused
+                    or not Humanoid or Humanoid.Health <= 0 or Humanoid.Sit or Humanoid.PlatformStand
+                    or State.reloading or State.stance == "Crouching" then return end
+                State.sprinting = true
+                local Status = State.rs_Player and State.rs_Player:FindFirstChild("Status")
+                local Variables = Status and Status:FindFirstChild("GameplayVariables")
+                local Sprinting = Variables and Variables:FindFirstChild("Sprinting")
+                if Sprinting and Sprinting:GetAttribute("Value") ~= true then Sprinting:SetAttribute("Value", true) end
             end
 
             local NextStateSetup, SetupState, SetupSprings = 0, nil, nil
@@ -12175,6 +12268,8 @@
         
             local function QueueHit(Shot)
                 if Shot.Queued or not Shot.Accepted or not Shot.Part or not Shot.Origin or not Shot.Ammo then return end
+                -- Ordinary silent aim is reported by the native collision, not a second timed hit.
+                if not Shot.Solution or not Shot.Solution.ForceHit then return end
                 local Speed = tonumber(ReadAttribute(Shot.Ammo, "MuzzleVelocity"))
                 if not Speed or Speed <= 0 then return end
                 Shot.Queued = true
@@ -12358,18 +12453,37 @@
                     if Controller:TryPacketReload(State) then return end
                     return Original(State, ...)
                 end)
-                Wrap(FPS, "sprint", function(Original, State, ...)
-                    if not Controller.Active or not Controller.Mods.SprintShooting then return Original(State, ...) end
-                    local Action, Alternate = State.ActionButtonHeld, State.AltActionButtonHeld
-                    State.ActionButtonHeld, State.AltActionButtonHeld = false, false
-                    local Results = table.pack(Original(State, ...))
-                    State.ActionButtonHeld, State.AltActionButtonHeld = Action, Alternate
+                Wrap(FPS, "aim", function(Original, State, Pressed, FromInput, ...)
+                    if Controller.Active and Controller.Mods.SprintADS and State.player == Player then
+                        if not Pressed and SprintADSTransition == State then return end
+                        SprintADSRequests[State] = Pressed and (State.sprinting or State.SprintButtonHeld) and true or nil
+                    end
+                    local Results = table.pack(Original(State, Pressed, FromInput, ...))
+                    Controller:UpdateSprintADS(State)
                     return table.unpack(Results, 1, Results.n)
+                end)
+                Wrap(FPS, "sprint", function(Original, State, ...)
+                    local ADS = Controller.Active and Controller.Mods.SprintADS and State.player == Player
+                    local Shooting = Controller.Active and Controller.Mods.SprintShooting and State.player == Player
+                    if not ADS and not Shooting then return Original(State, ...) end
+                    local Action, Alternate, Aiming = State.ActionButtonHeld, State.AltActionButtonHeld, State.isAiming
+                    local Previous = SprintADSTransition
+                    if ADS and Aiming then State.isAiming, SprintADSTransition = false, State end
+                    if Shooting then State.ActionButtonHeld, State.AltActionButtonHeld = false, false end
+                    local Results = table.pack(pcall(Original, State, ...))
+                    State.ActionButtonHeld, State.AltActionButtonHeld = Action, Alternate
+                    if ADS and Aiming then State.isAiming = Aiming end
+                    SprintADSTransition = Previous
+                    if ADS then SprintADSRequests[State] = State.sprinting and true or nil end
+                    if not Results[1] then error(Results[2], 0) end
+                    Controller:UpdateSprintADS(State)
+                    return table.unpack(Results, 2, Results.n)
                 end)
                 Wrap(Bullet, "CreateBullet", function(Original, Self, Weapon, WorldModel, ViewModel, AimPart, ...)
                     local Args = table.pack(...)
                     local Context = {Origin = ShotOrigin(), Ammo = AmmoTypes and AmmoTypes:FindFirstChild(tostring(Args[2])),
                         WorldModel = WorldModel, ViewModel = ViewModel}
+                    Controller.ProjectileSolution = nil
                     local SilentChance = math.clamp(tonumber(Controller.Aim.HitChance) or 100, 0, 100)
                     local SilentAllowed = Controller:IsAimActive() and (SilentChance >= 100
                         or (SilentChance > 0 and math.random() * 100 < SilentChance))
@@ -12394,6 +12508,7 @@
                                 Controller.ProjectileSolution = {Origin = Origin, Part = Part, Kind = Solution.Kind,
                                     ForceHit = Solution.ForceHit or (Controller.Mods.InstantHit and SilentAllowed),
                                     InstantHit = Controller.Mods.InstantHit and SilentAllowed, Created = ManipulationClock()}
+                                Context.Solution = Controller.ProjectileSolution
                             else
                                 Controller.ProjectileSolution = nil
                                 -- Silent aim may aim through cover when visibility filtering is disabled.
@@ -12460,13 +12575,14 @@
                             and Controller:BlockACReport(table.pack(...)) then return end
                         if Method == "FireServer" and Controller:ShouldBlockDamage(Remote, ...) then return end
                         if Method == "Raycast" and Remote == workspace
-                            and (Controller.Mods.InstantBullet or Controller.ProjectileSolution)
+                            and (Controller.Mods.InstantBullet or Controller.HasProjectileOverrides)
                             and (not checkcaller or not checkcaller()) then
-                            local Trace = debug.traceback()
-                            if Trace:find("onStep", 1, true) and Trace:find("Bullet", 1, true) then
+                            local Params = select(3, ...)
+                            local KnownBullet = Params and ProjectileCasts[Params] ~= nil
+                            if KnownBullet or debug.traceback():find("Bullet", 1, true) then
                                 local Args = table.pack(...)
                                 local Forced
-                                Args[1], Args[2], Forced = Controller:GetProjectileCast(Args[1], Args[2])
+                                Args[1], Args[2], Forced = Controller:GetProjectileCast(Args[1], Args[2], Args[3])
                                 if Forced then return Forced end
                                 return Forward(Remote, Method, table.unpack(Args, 1, Args.n))
                             end
@@ -12520,9 +12636,12 @@
                                 Shot = {Id = Args[2], Created = os.clock(), Accepted = false,
                                     Part = Context and Context.Part, Origin = Context and Context.Origin,
                                     Manipulated = Context and Context.Manipulated == true, Kind = Context and Context.Kind,
+                                    Solution = Context and Context.Solution,
                                     Ammo = Context and Context.Ammo, Direction = Args[1], AimPoint = Context and Context.AimPoint,
                                     WorldModel = Context and Context.WorldModel, ViewModel = Context and Context.ViewModel}
                                 Shots[Args[2]] = Shot
+                                RecentShots[Args[2]] = Shot
+                                if Shot.Solution then Controller.HasProjectileOverrides = true end
                                 if Controller.ProjectileSolution then Controller.ProjectileSolution.ShotId = Shot.Id end
                                 if Shot.Manipulated and Controller.OnManipulatedShot then pcall(Controller.OnManipulatedShot, Shot) end
                             end
@@ -12584,7 +12703,7 @@
                 Line.AnchorPoint = Vector2.new(0.5, 0.5)
                 Line.BorderSizePixel = 0
                 table.insert(Connections, ConnectScheduled(RunService.RenderStepped, function(Delta)
-                    if Controller.Mods.AlwaysSprint or Controller.Mods.NoSprintAnimation or AutoSprintState
+                    if Controller.Mods.AlwaysSprint or Controller.Mods.NoSprintAnimation or Controller.Mods.SprintADS or AutoSprintState
                         or next(SprintAnimationWeights) then
                         if not LiveFPS or LiveFPS.character ~= Player.Character then DiscoverFPS() end
                         Controller:UpdateSprintMods(LiveFPS)
@@ -12616,7 +12735,18 @@
                 end))
                 table.insert(Connections, ConnectScheduled(RunService.Heartbeat, function()
                                                                                                     
-                    for Id, Shot in pairs(Shots) do if os.clock() - Shot.Created > 60 then Shots[Id] = nil end end
+                    local HasProjectileOverrides, Now = false, os.clock()
+                    for Id, Shot in pairs(Shots) do
+                        local Age = Now - Shot.Created
+                        if Age > 60 then Shots[Id] = nil
+                        elseif Age <= 2 and Shot.Solution and not Shot.NaturalReported and not Shot.Reported then
+                            HasProjectileOverrides = true
+                        end
+                    end
+                    Controller.HasProjectileOverrides = HasProjectileOverrides
+                    for Id, Shot in pairs(RecentShots) do
+                        if Now - Shot.Created > 2 then RecentShots[Id] = nil end
+                    end
                     if Controller.Mods.AutoFill then Controller:FillMagazine() end
                     if Controller.Mods.AutoReload or (Controller.Rage.AutoReload and Controller:IsRageActive()) then
                         if not LiveFPS or LiveFPS.character ~= Player.Character then DiscoverFPS() end
@@ -12634,6 +12764,10 @@
         
             function Controller:Stop()
                 self.Active = false
+                table.clear(RecentShots)
+                table.clear(TargetRecords)
+                table.clear(TargetVisibility)
+                table.clear(ProjectileCasts)
                 self:UpdateSprintMods(nil)
                 self:StopAC()
                 self:RestoreForceHitbox()
@@ -17048,7 +17182,7 @@
         local Spectate = CreateSpectateController()
         local Page = Window:Page({Name = "Other", SubPages = true})
         local PlayerPage = Page:SubPage({Name = "Player list", Columns = 1})
-        local Presence = {Enabled = false, Users = {}, Updated = 0, NextUpdate = 0, Generation = 0}
+        local Presence = {Enabled = false, Users = {}, OnlineCount = nil, Updated = 0, NextUpdate = 0, Generation = 0}
         Library.CinnamonPresence = Presence
         do
             local Http = game:GetService("HttpService")
@@ -17139,6 +17273,9 @@
                     end
                     if Success then
                         Session, Failures = Result.sessionToken, 0
+                        local OnlineCount = tonumber(Result.onlineCount)
+                        Presence.OnlineCount = OnlineCount and OnlineCount >= 0 and OnlineCount < math.huge
+                            and math.floor(OnlineCount) or nil
                         table.clear(Presence.Users)
                         for _, Id in ipairs(Result.userIds) do
                             if type(Id) == "number" then Presence.Users[Id] = true end
@@ -17162,6 +17299,10 @@
                 return self:IsUserId(Player.UserId)
             end
             function Presence:GetOnlineCount()
+                if not self.Enabled or self.Updated == 0 or os.clock() - self.Updated >= 90 then return nil end
+                return self.OnlineCount
+            end
+            function Presence:GetServerCount()
                 local Count = 0
                 for _, Player in ipairs(Players:GetPlayers()) do
                     if self:IsUser(Player) then Count += 1 end
@@ -17198,6 +17339,7 @@
                 Busy, LastPoll, RefreshPending = false, -math.huge, false
                 self.Generation += 1
                 self.Enabled, self.NextUpdate, self.Updated = Value == true, 0, 0
+                self.OnlineCount = nil
                 self.Error = nil
                 table.clear(self.Users)
                 Leave(Session); Session = nil
@@ -17217,7 +17359,7 @@
             function Presence:BuildSettingsPage(SettingsPage)
                 local PresencePage = SettingsPage:SubPage({Name = "Cinnamon users", Columns = 1})
                 local Controls = PresencePage:Section({Name = "Cinnamon users", Side = 1})
-                PresenceToggle = Controls:Toggle({Name = "Cinnamon presence · 0 online", Flag = "CinnamonPresenceEnabled", Default = true,
+                PresenceToggle = Controls:Toggle({Name = "Cinnamon presence", Flag = "CinnamonPresenceEnabled", Default = true,
                     Callback = function(Value) Presence:SetEnabled(Value) end})
                 Status = Controls:Label("Presence disabled")
             end
@@ -17225,15 +17367,19 @@
                 Poll()
                 if not Status then return end
                 local Count = Presence:GetOnlineCount()
+                local ServerCount = Presence:GetServerCount()
                 if PresenceToggle then
-                    PresenceToggle:SetText("Cinnamon presence · " .. tostring(Count) .. " online")
+                    PresenceToggle:SetText("Cinnamon presence" .. (Count ~= nil
+                        and " · " .. tostring(Count) .. " online across all servers" or ""))
                 end
                 Status:SetText(not Presence.Enabled and "Presence disabled"
                     or type(Send) ~= "function" and "Your executor does not support HTTP requests"
                     or game.JobId == "" and "Join a Roblox server to use presence"
                     or Presence.Error and (Presence.Error .. "; retrying")
                     or Presence.Updated == 0 and "Connecting..."
-                    or Count .. " Cinnamon users in this server (including you)")
+                    or os.clock() - Presence.Updated >= 90 and "Presence data expired; reconnecting..."
+                    or (ServerCount .. " Cinnamon users in this server (including you)" .. (Count == nil
+                        and " · Global count unavailable (update presence API)" or "")))
             end, 1)
             UnloadCallbacks[#UnloadCallbacks + 1] = function()
                 Presence:SetEnabled(false)
@@ -18463,6 +18609,9 @@
             local Part = Object and Object:GetAttribute("Hidden") ~= true and ObjectPart(Object)
             if not Part and Objective.ItemId then Part, Object = FindWorld(Objective.ItemId) end
             if Part then return Part.Position, Part, "Item", Object or Part end
+            local Areas = QuestSearchAreas[workspace:GetAttribute("MapName")]
+            local Area = Areas and Areas[Objective.ItemId]
+            if Area then return Area.Position, nil, "Quest location " .. Area.Grid end
             if Objective.ItemId and Type == "Fetch" then return end
             if Type == "HandOver" then return end
             local Point = Position(Objective.Position)
@@ -18817,12 +18966,14 @@
         Actions:Button():Add("Accept all available quests", function() Perform("Activate") end)
         Actions:Button():Add("Hand over owned quest items", function() Perform("HandOver") end)
         Actions:Button():Add("Complete all ready quests", function() Perform("Complete") end)
-        local RefreshConnection = ConnectScheduled(Run.Heartbeat, function()
+        local RefreshConnection = ConnectScheduled(Run.Heartbeat, function(Delta)
             if not S.Enabled and not Page.Active then return end
+            Elapsed += Delta
+            if Elapsed < 1 then return end
             Elapsed = 0
             BindQuestChanges()
             Refresh()
-        end, 1)
+        end)
         local RenderConnection = ConnectScheduled(Run.RenderStepped, function()
             if not S.Enabled or (not S.Line and not S.TargetText) or not next(Routes) then HideGuide(); return end
             local Root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
@@ -18848,21 +18999,28 @@
                         R.Anchor.Name, R.Anchor.Size, R.Anchor.Transparency, R.Anchor.Anchored = "QuestLocation", Vector3.one, 1, true
                         R.Anchor.CanCollide, R.Anchor.CanTouch, R.Anchor.CanQuery, R.Anchor.Parent = false, false, false, Guide
                     end
-                    R.Anchor.Position, R.Endpoint.Parent = T.Position, R.Anchor
+                    if R.Anchor.Position ~= T.Position then R.Anchor.Position = T.Position end
+                    if R.Endpoint.Parent ~= R.Anchor then R.Endpoint.Parent = R.Anchor end
                 end
-                R.Line.Attachment0, R.Line.Attachment1 = Source, R.Endpoint
+                if R.Line.Attachment0 ~= Source then R.Line.Attachment0 = Source end
+                if R.Line.Attachment1 ~= R.Endpoint then R.Line.Attachment1 = R.Endpoint end
                 if R.Color ~= Library.Theme.Accent then
                     R.Color = Library.Theme.Accent
                     R.Line.Color = ColorSequence.new(R.Color)
                 end
-                R.Line.Enabled = S.Line
+                if R.Line.Enabled ~= S.Line then R.Line.Enabled = S.Line end
                 if not Camera then R.Distance.Visible = false; continue end
                 local Point, Visible = Camera:WorldToViewportPoint(T.Position)
                 R.Distance.Visible = S.TargetText and Visible
                 if R.Distance.Visible then
-                    R.Distance.TextColor3, R.Distance.FontFace = Library.Theme.Accent, Library.Font
-                    R.Distance.Position = UDim2.fromOffset(Point.X, Point.Y)
-                    R.Distance.Text = T.QuestName .. " / " .. T.Name .. " | " .. math.floor((T.Position - Root.Position).Magnitude / GameUnitsPerMeter) .. " meters"
+                    if R.Distance.TextColor3 ~= Library.Theme.Accent then R.Distance.TextColor3 = Library.Theme.Accent end
+                    if R.Distance.FontFace ~= Library.Font then R.Distance.FontFace = Library.Font end
+                    UpdateMarkerPosition(R.Distance, Point.X, Point.Y, R)
+                    local Meters = math.floor((T.Position - Root.Position).Magnitude / GameUnitsPerMeter)
+                    if R.TextMeters ~= Meters or R.TextQuest ~= T.QuestName or R.TextName ~= T.Name then
+                        R.TextMeters, R.TextQuest, R.TextName = Meters, T.QuestName, T.Name
+                        R.Distance.Text = T.QuestName .. " / " .. T.Name .. " | " .. Meters .. " meters"
+                    end
                 end
             end
         end)
@@ -23843,20 +24001,17 @@
                 UpperTorso = {"UpperTorso", "Torso"},
                 LowerTorso = {"LowerTorso", "Torso"},
             }
+            local AllowedHitboxes, ExcludedHitboxes, SingleHitbox = {}, {}, {}
+            local TargetRay, FilterCamera, FilterCharacter, FilterEffects
             function C:GetTargetPart(Character, Camera, Origin, Center)
                 local RandomHitbox = S.Bone == "Random hitbox"
                 local Adaptive = S.Bone == "Closest to crosshair" or S.Bone == "Visible part (torso first)" or RandomHitbox
                 local VisibleParts = S.Bone == "Visible part (torso first)"
-                local Names = Adaptive and TargetParts or FixedTargetParts[S.Bone] or {S.Bone}
+                local Names = Adaptive and TargetParts or FixedTargetParts[S.Bone] or SingleHitbox
                 local BestPart, BestScore = nil, S.FOV * S.FOV
-                local BestPoint, Previous, Options, Weight = nil, nil, {}, 0
-                local Allowed = {}
-                for _, Group in ipairs(S.RandomParts or {"Head", "Torso"}) do Allowed[Group] = true end
-                local Excluded = {}
-                if S.Bone == "Closest to crosshair" then
-                    for _, Name in ipairs(S.ExcludedHitboxes or {}) do Excluded[Name] = true end
-                end
-                local Ray = S.Bone == "Closest to crosshair" and Camera:ViewportPointToRay(Center.X, Center.Y)
+                local BestPoint, Previous, Options, Weight = nil, nil, RandomHitbox and {} or nil, 0
+                local Allowed, Excluded = AllowedHitboxes, ExcludedHitboxes
+                local Ray = TargetRay
                 local RandomSelection = self.RandomSelections and self.RandomSelections[Character]
                 if RandomHitbox and RandomSelection and os.clock() < RandomSelection.NextRoll then
                     Names = table.clone(Names)
@@ -23873,7 +24028,8 @@
                         or (Excluded.Feet and Name:find("Foot", 1, true)) then continue end
                     local Part = Combat:GetAimPart(Character, Name)
                     if not Part or not Part:IsA("BasePart") then continue end
-                    if (Part.Position - Origin).Magnitude > S.Distance then continue end
+                    local Offset = Part.Position - Origin
+                    if Offset:Dot(Offset) > S.Distance * S.Distance then continue end
                     local AimPoint = Part.Position
                     if Ray then
                         local Depth = math.max(0, (Part.Position - Ray.Origin):Dot(Ray.Direction.Unit))
@@ -23928,15 +24084,28 @@
             function C:SelectTarget(Camera)
                 local Now = os.clock()
                 if Now < NextTarget then return end
-                NextTarget = Now + 0.05
+                if Now - NextTarget < 1 / 30 then NextTarget += 1 / 30 else NextTarget = Now + 1 / 30 end
                 local BestTarget, BestPart, BestPoint
                 local Center = Camera.ViewportSize * 0.5
                 local Origin = Camera.CFrame.Position
-                local Ignore = {Camera}
-                if Player.Character then table.insert(Ignore, Player.Character) end
                 local NoCollision = workspace:FindFirstChild("NoCollision")
-                if NoCollision then table.insert(Ignore, NoCollision) end
-                Params.FilterDescendantsInstances = Ignore
+                if FilterCamera ~= Camera or FilterCharacter ~= Player.Character or FilterEffects ~= NoCollision then
+                    local Ignore = {Camera}
+                    if Player.Character then Ignore[#Ignore + 1] = Player.Character end
+                    if NoCollision then Ignore[#Ignore + 1] = NoCollision end
+                    Params.FilterDescendantsInstances = Ignore
+                    FilterCamera, FilterCharacter, FilterEffects = Camera, Player.Character, NoCollision
+                end
+                table.clear(AllowedHitboxes)
+                table.clear(ExcludedHitboxes)
+                if S.RandomParts then
+                    for _, Group in ipairs(S.RandomParts) do AllowedHitboxes[Group] = true end
+                else AllowedHitboxes.Head, AllowedHitboxes.Torso = true, true end
+                if S.Bone == "Closest to crosshair" then
+                    for _, Name in ipairs(S.ExcludedHitboxes or {}) do ExcludedHitboxes[Name] = true end
+                end
+                SingleHitbox[1] = S.Bone
+                TargetRay = S.Bone == "Closest to crosshair" and Camera:ViewportPointToRay(Center.X, Center.Y) or nil
                 local Best = S.FOV * S.FOV
                 local function Consider(Character)
                     if Combat:IsCinnamonTarget(Character) then return end
@@ -25651,8 +25820,10 @@
                             Track(Object)
                                                                                                 
                             if Object.Parent and Object.Parent:IsA("Model") then Track(Object.Parent) end
+                            if Candidates[Object] or Object.Parent and Candidates[Object.Parent] then Elapsed = 1 end
                         end)
                         IndexConnections[#IndexConnections + 1] = workspace.DescendantRemoving:Connect(function(Object)
+                            if Candidates[Object] then Elapsed = 1 end
                             Candidates[Object] = nil
                         end)
                         task.spawn(function()
@@ -25740,8 +25911,7 @@
                             if Label.FontFace ~= ESP.FontFace then Label.FontFace = ESP.FontFace end
                             if Label.TextSize ~= ESP.FontSize then Label.TextSize = ESP.FontSize end
                             if Label.TextColor3 ~= S.Color then Label.TextColor3 = S.Color end
-                            local Text = S.Distance and string.format("%s [%d meters]", Entry.Name, math.floor(Meters + 0.5)) or Entry.Name
-                            if Label.Text ~= Text then Label.Text = Text end
+                            UpdateMarkerText(Label, Entry.Name, Meters, S.Distance, Entry)
                         end
                     end, true)
                     UnloadCallbacks[#UnloadCallbacks + 1] = function()
@@ -25797,8 +25967,10 @@
                             Track(Object)
                                                                                                 
                             if Object.Parent and Object.Parent:IsA("Model") then Track(Object.Parent) end
+                            if Candidates[Object] or Object.Parent and Candidates[Object.Parent] then Elapsed = 1 end
                         end)
                         IndexConnections[#IndexConnections + 1] = workspace.DescendantRemoving:Connect(function(Object)
+                            if Candidates[Object] then Elapsed = 1 end
                             Candidates[Object] = nil
                         end)
                         task.spawn(function()
@@ -25885,8 +26057,7 @@
                             if Label.FontFace ~= ESP.FontFace then Label.FontFace = ESP.FontFace end
                             if Label.TextSize ~= ESP.FontSize then Label.TextSize = ESP.FontSize end
                             if Label.TextColor3 ~= S.Color then Label.TextColor3 = S.Color end
-                            local Text = S.Distance and string.format("%s [%d meters]", Entry.Name, math.floor(Meters + 0.5)) or Entry.Name
-                            if Label.Text ~= Text then Label.Text = Text end
+                            UpdateMarkerText(Label, Entry.Name, Meters, S.Distance, Entry)
                         end
                     end, true)
                     UnloadCallbacks[#UnloadCallbacks + 1] = function()
@@ -25905,7 +26076,7 @@
     return function(Library, ESP, UnloadCallbacks)
         local Player = game:GetService("Players").LocalPlayer
         local S = {Enabled = false, Distance = true, MaxDistance = 2000, ForceRender = false,
-            UnlimitedDistance = false, Color = Library.Theme.Accent}
+            UnlimitedDistance = false, Items = true, LootItems = false, Interactions = true, Locations = true, Color = Library.Theme.Accent}
         local Holder = Instance.new("ScreenGui")
         Holder.Name = "CinnamonQuestItemESP"
         Holder.IgnoreGuiInset, Holder.ResetOnSpawn, Holder.DisplayOrder = true, false, 1
@@ -25933,10 +26104,22 @@
             for _, Quest in pairs(API.Quests or {}) do
                 for _, Objective in pairs(Quest.Objectives or {}) do
                     if type(Objective.ItemId) == "string" then KnownItems[Objective.ItemId] = true end
+                    if type(Objective.ContainerName) == "string" then KnownItems[Objective.ContainerName] = true end
                 end
             end
         end
-        local NeededItems, QuestConnections, ObjectiveConnections = {}, {}, {}
+        local NeededItems, NeededLocations, QuestConnections, ObjectiveConnections = {}, {}, {}, {}
+        local QuestDestinations = {}
+        local function Position(Value)
+            if typeof(Value) == "Vector3" then return Value end
+            if typeof(Value) == "CFrame" then return Value.Position end
+            if type(Value) == "string" then
+                local X, Y, Z = Value:match("^%s*([%d%.%-]+)%s*,%s*([%d%.%-]+)%s*,%s*([%d%.%-]+)")
+                if tonumber(X) and tonumber(Y) and tonumber(Z) then
+                    return Vector3.new(tonumber(X), tonumber(Y), tonumber(Z))
+                end
+            end
+        end
         local BoundQuestRoot
         local function QuestRoot()
             local Players = RS:FindFirstChild("Players")
@@ -25946,8 +26129,8 @@
             return Journey and Journey:FindFirstChild("Quests")
         end
         local function BuildNeededItems(Root)
-            local Needed = {}
-            if not Root then return Needed end
+            local Needed, Locations = {}, {}
+            if not Root then return Needed, Locations end
             for _, Quest in ipairs(Root:GetChildren()) do
                 if Quest:GetAttribute("State") ~= "Active" then continue end
                 local Definition = OK and type(API) == "table" and API.Quests and API.Quests[Quest.Name]
@@ -25959,13 +26142,35 @@
                     local Progress = tonumber(Objective:GetAttribute("Progress")) or 0
                     local Amount = math.max(1, tonumber(Objective:GetAttribute("Amount") or Def.Amount) or 1)
                     if Complete or Progress >= Amount then continue end
-                    for _, Key in ipairs({"ItemId", "ItemName"}) do
+                    local MapName = Objective:GetAttribute("MapName") or Def.MapName
+                    if MapName and MapName ~= workspace:GetAttribute("MapName") then continue end
+                    local Type = Objective:GetAttribute("Type") or Def.Type
+                    local Kind = (Type == "Fetch" or Type == "HandOver") and "Item" or "Interaction"
+                    local Description = Objective:GetAttribute("Description") or Def.Description
+                    for _, Key in ipairs({"ItemId", "ItemName", "ContainerName"}) do
                         local Name = Objective:GetAttribute(Key) or Def[Key]
-                        if type(Name) == "string" and Name ~= "" then Needed[Name] = true end
+                        if type(Name) == "string" and Name ~= "" then
+                            Needed[Name] = {Kind = Key == "ContainerName" and "Interaction"
+                                or Key == "ItemName" and "Loot" or Kind,
+                                Description = Description, QuestName = Definition and Definition.Name or Quest.Name}
+                        end
+                    end
+                    local Point = Position(Objective:GetAttribute("Position") or Def.Position)
+                    local ItemId = Objective:GetAttribute("ItemId") or Def.ItemId
+                    local Cached = QuestDestinations[workspace:GetAttribute("MapName")]
+                    Point = Point or Cached and Cached[ItemId]
+                    local Areas = QuestSearchAreas[workspace:GetAttribute("MapName")]
+                    local Area = not Point and Areas and Areas[ItemId]
+                    if Area then Point = Area.Position end
+                    if Point then
+                        Locations[Objective] = {Position = Point, Kind = "Location",
+                            ItemId = ItemId, Name = tostring(Definition and Definition.Name or Quest.Name)
+                                .. ": " .. tostring(Description or "Go to objective")
+                                .. (Area and " (grid " .. Area.Grid .. ")" or "")}
                     end
                 end
             end
-            return Needed
+            return Needed, Locations
         end
         local function ClearQuestConnections()
             for _, C in ipairs(QuestConnections) do C:Disconnect() end
@@ -26000,7 +26205,8 @@
         local WorldItems, WorldConnections = {}, {}
         local Bound = false
         local function Track(Object)
-            if KnownItems[Object.Name] and (Object:IsA("Model") or Object:IsA("BasePart")) then WorldItems[Object] = true end
+            if KnownItems[Object.Name] and (Object:IsA("Model") or Object:IsA("BasePart")
+                or Object:IsA("Folder") or Object:IsA("ObjectValue")) then WorldItems[Object] = true end
         end
         local function BindWorldItems()
             if Bound then return end
@@ -26009,33 +26215,78 @@
             for Name in pairs(KnownItems) do Selectors[#Selectors + 1] = string.format("[Name = %q]", Name) end
             WorldConnections[#WorldConnections + 1] = workspace.DescendantAdded:Connect(Track)
             WorldConnections[#WorldConnections + 1] = workspace.DescendantRemoving:Connect(function(Object) WorldItems[Object] = nil end)
-            for _, Object in ipairs(workspace:QueryDescendants(table.concat(Selectors, ", "))) do Track(Object) end
+            if #Selectors > 0 then
+                for _, Object in ipairs(workspace:QueryDescendants(table.concat(Selectors, ", "))) do Track(Object) end
+            end
+        end
+        local function IsQuestLoot(Object)
+            local InLoot = false
+            for _, FolderName in ipairs({"DroppedItems", "Containers", "SupplyDrops", "Airdrops"}) do
+                local Folder = workspace:FindFirstChild(FolderName)
+                if Folder and Object:IsDescendantOf(Folder) then InLoot = true; break end
+            end
+            if not InLoot or Object:GetAttribute("Hidden") == true then return false end
+            if Object:IsA("ObjectValue") then
+                return Object.Value ~= nil and Object.Parent and Object.Parent.Name == "Inventory"
+                    and (tonumber(Object:GetAttribute("Amount")) or 1) > 0
+                    and tostring(Object:GetAttribute("Slot") or ""):match("^Container%d+$") ~= nil
+            end
+            return Object:IsA("Model") and Object:GetAttribute("Collectable") == true
         end
         local function Refresh()
             local Root = QuestRoot()
             BindQuestState(Root)
-            NeededItems = BuildNeededItems(Root)
+            NeededItems, NeededLocations = BuildNeededItems(Root)
             BindWorldItems()
+            for Name in pairs(NeededItems) do
+                if not KnownItems[Name] then
+                    KnownItems[Name] = true
+                    for _, Object in ipairs(workspace:QueryDescendants(string.format("[Name = %q]", Name))) do Track(Object) end
+                end
+            end
             local Seen = {}
+            local function SetEntry(Key, Name, Kind, Part, Point)
+                Seen[Key] = true
+                local Entry = Entries[Key]
+                if not Entry then
+                    local Label = Instance.new("TextLabel")
+                    Label.Name, Label.BackgroundTransparency, Label.TextStrokeTransparency = Key.Name, 1, 0
+                    Label.AnchorPoint, Label.Size = Vector2.new(0.5, 1), UDim2.fromOffset(360, 24)
+                    Label.TextStrokeColor3, Label.Visible, Label.Parent = Color3.new(), false, Holder
+                    Entry = {Label = Label}
+                    Entries[Key] = Entry
+                end
+                Entry.Part, Entry.Position, Entry.Name, Entry.Kind = Part, Point, tostring(Name), Kind
+                Entry.DisplayName = Kind == "Interaction" and "[Interact] " .. Entry.Name
+                    or Kind == "Loot" and "[Quest loot] " .. Entry.Name
+                    or Kind == "Location" and "[Location] " .. Entry.Name or Entry.Name
+            end
             local function Add(Object)
-                if not NeededItems[Object.Name] or Object:GetAttribute("Hidden") == true then return end
-                local Props = Object:FindFirstChild("ItemProperties")
+                local Target = NeededItems[Object.Name]
+                if not Target or Object:GetAttribute("Hidden") == true then return end
+                if Target.Kind == "Loot" and not IsQuestLoot(Object) then return end
+                local Template = Object:IsA("ObjectValue") and Object.Value
+                local Props = (Template or Object):FindFirstChild("ItemProperties")
                 local Name = Props and (Props:GetAttribute("CallSign") or Props:GetAttribute("ItemName"))
                     or Object:GetAttribute("DisplayName") or Object.Name:gsub("(%l)(%u)", "%1 %2")
                 local Part = Object:IsA("BasePart") and Object
-                    or Object:IsA("Model") and (Object.PrimaryPart or Object:FindFirstChildWhichIsA("BasePart", true))
-                if Part and not ExcludedName(Object.Name) and not ExcludedName(Name) then
-                    Seen[Object] = true
-                    local Entry = Entries[Object]
-                    if not Entry then
-                        local Label = Instance.new("TextLabel")
-                        Label.Name, Label.BackgroundTransparency, Label.TextStrokeTransparency = Object.Name, 1, 0
-                        Label.AnchorPoint, Label.Size = Vector2.new(0.5, 1), UDim2.fromOffset(280, 24)
-                        Label.TextStrokeColor3, Label.Visible, Label.Parent = Color3.new(), false, Holder
-                        Entry = {Label = Label}
-                        Entries[Object] = Entry
+                    or Object:IsA("Model") and Object.PrimaryPart or Object:FindFirstChildWhichIsA("BasePart", true)
+                if not Part and Target.Kind == "Loot" then
+                    local Model = Object:FindFirstAncestorOfClass("Model")
+                    Part = Model and (Model.PrimaryPart or Model:FindFirstChildWhichIsA("BasePart", true))
+                end
+                if Part and (Target.Kind ~= "Item" or not ExcludedName(Object.Name) and not ExcludedName(Name)) then
+                    if Target.Kind ~= "Loot" then
+                        local Map = workspace:GetAttribute("MapName")
+                        if Map then
+                            QuestDestinations[Map] = QuestDestinations[Map] or {}
+                            QuestDestinations[Map][Object.Name] = Part.Position
+                        end
                     end
-                    Entry.Part, Entry.Name = Part, tostring(Name)
+                    local ObjectiveName = Target.Kind ~= "Loot" and Target.Description
+                        and (Target.QuestName .. ": " .. Target.Description) or Name
+                    SetEntry(Object, ObjectiveName,
+                        Target.Kind, Part)
                 end
             end
             local function Visit(Folder)
@@ -26047,6 +26298,16 @@
             Visit(workspace:FindFirstChild("QuestItems"))
             for Object in pairs(WorldItems) do
                 if Object:IsDescendantOf(workspace) then Add(Object) else WorldItems[Object] = nil end
+            end
+            for Objective, Target in pairs(NeededLocations) do
+                local Loaded = false
+                if Target.ItemId then
+                    for Object in pairs(Seen) do
+                        if Object.Name == Target.ItemId then Loaded = true; break end
+                    end
+                end
+                if Loaded then continue end
+                SetEntry(Objective, Target.Name, Target.Kind, nil, Target.Position)
             end
             for Object, Entry in pairs(Entries) do
                 if not Seen[Object] then Entry.Label:Destroy(); Entries[Object] = nil end
@@ -26071,8 +26332,10 @@
                 NextStream = os.clock() + 2
                 local Positions = {}
                 for Object, Entry in pairs(Entries) do
-                    if NeededItems[Object.Name] and Entry.Part and Entry.Part.Parent then
-                        local Position = Entry.Part.Position
+                    local Show = Entry.Kind == "Item" and S.Items or Entry.Kind == "Loot" and S.LootItems or Entry.Kind == "Interaction" and S.Interactions
+                        or Entry.Kind == "Location" and S.Locations
+                    if Show and (Entry.Position or Entry.Part and Entry.Part.Parent) then
+                        local Position = Entry.Position or Entry.Part.Position
                         if S.UnlimitedDistance or (Position - Origin).Magnitude / GameUnitsPerMeter <= S.MaxDistance then
                             Positions[#Positions + 1] = Position
                         end
@@ -26090,26 +26353,37 @@
             end
             for Object, Entry in pairs(Entries) do
                 local Label, Part = Entry.Label, Entry.Part
-                if not NeededItems[Object.Name] then Label.Visible = false; continue end
-                local Valid = Object:IsDescendantOf(workspace) and Part:IsDescendantOf(Object)
-                if Part == Object then Valid = Object:IsDescendantOf(workspace) end
-                Valid = Valid and Object:GetAttribute("Hidden") ~= true
+                local Show = Entry.Kind == "Item" and S.Items or Entry.Kind == "Loot" and S.LootItems or Entry.Kind == "Interaction" and S.Interactions
+                    or Entry.Kind == "Location" and S.Locations
+                if not Show then Label.Visible = false; continue end
+                local Valid = Entry.Kind == "Location" and NeededLocations[Object] ~= nil
+                if Part then
+                    Valid = NeededItems[Object.Name] ~= nil and Object:IsDescendantOf(workspace)
+                        and (Part == Object or Part:IsDescendantOf(Object)) and Object:GetAttribute("Hidden") ~= true
+                    if Entry.Kind == "Loot" and Object:IsA("ObjectValue") then
+                        local Model = Object:FindFirstAncestorOfClass("Model")
+                        Valid = NeededItems[Object.Name] ~= nil and IsQuestLoot(Object) and Model ~= nil
+                            and Part:IsDescendantOf(Model)
+                    elseif Entry.Kind == "Loot" then
+                        Valid = Valid and IsQuestLoot(Object)
+                    end
+                end
                 if not Valid then
                     Label.Visible = false
                     Elapsed = 1
                     continue
                 end
-                local Meters = (Part.Position - Origin).Magnitude / GameUnitsPerMeter
+                local Position = Entry.Position or Part.Position
+                local Meters = (Position - Origin).Magnitude / GameUnitsPerMeter
                 if not S.UnlimitedDistance and Meters > S.MaxDistance then Label.Visible = false; continue end
-                local Point, OnScreen = Camera:WorldToViewportPoint(Part.Position)
+                local Point, OnScreen = Camera:WorldToViewportPoint(Position)
                 Label.Visible = OnScreen and Point.Z > 0
                 if not Label.Visible then continue end
                 UpdateMarkerPosition(Label, Point.X, Point.Y - 8, Entry)
                 if Label.FontFace ~= ESP.FontFace then Label.FontFace = ESP.FontFace end
                 if Label.TextSize ~= ESP.FontSize then Label.TextSize = ESP.FontSize end
                 if Label.TextColor3 ~= S.Color then Label.TextColor3 = S.Color end
-                local Text = S.Distance and string.format("%s [%d meters]", Entry.Name, math.floor(Meters + 0.5)) or Entry.Name
-                if Label.Text ~= Text then Label.Text = Text end
+                UpdateMarkerText(Label, Entry.DisplayName, Meters, S.Distance, Entry)
             end
         end, true)
         UnloadCallbacks[#UnloadCallbacks + 1] = function()
@@ -26119,6 +26393,7 @@
             for _, C in ipairs(WorldConnections) do C:Disconnect() end
             ClearQuestConnections()
             table.clear(NeededItems)
+            table.clear(NeededLocations)
             table.clear(WorldItems)
             table.clear(Entries)
         end
@@ -26899,12 +27174,18 @@
                 end
                 if Disabled then
                     HideInventoryBackgrounds()
+                    local RefreshPending = false
                     InventoryBackgroundConnection = PlayerGui.DescendantAdded:Connect(function(Object)
                         if Object:IsA("UIStroke") or Object.Name == "Decor"
                             or Object.Name == "MainGui" or Object.Name == "MainFrame"
                             or Object.Name == "BackpackFrame" or Object.Name == "InventoryFrame"
                             or Object.Name == "CharacterFrame" or Object.Name == "Loot" then
-                            task.defer(HideInventoryBackgrounds)
+                            if RefreshPending then return end
+                            RefreshPending = true
+                            task.defer(function()
+                                RefreshPending = false
+                                HideInventoryBackgrounds()
+                            end)
                         end
                     end)
                 else
@@ -26932,6 +27213,7 @@
             local ViewmodelConnection, CurrentWeaponModel, OriginalWeaponScale
             local ArmsInvisible, ArmsConnection = false, nil
             local OriginalArmTransparency = setmetatable({}, {__mode = "k"})
+            local ArmViewModel, ArmAddedConnection, ArmRemovedConnection
             local RunService = game:GetService("RunService")
 
             local function IsViewmodelArmPart(Part, ViewModel)
@@ -26954,18 +27236,44 @@
                 return false
             end
 
+            local function ClearArmCache()
+                if ArmAddedConnection then ArmAddedConnection:Disconnect(); ArmAddedConnection = nil end
+                if ArmRemovedConnection then ArmRemovedConnection:Disconnect(); ArmRemovedConnection = nil end
+                ArmViewModel = nil
+                for Part, Transparency in pairs(OriginalArmTransparency) do
+                    if Part.Parent and Part.LocalTransparencyModifier ~= Transparency then Part.LocalTransparencyModifier = Transparency end
+                end
+                table.clear(OriginalArmTransparency)
+            end
+
             local function ApplyArmsInvisible()
                 local Camera = workspace.CurrentCamera
                 local ViewModel = Camera and Camera:FindFirstChild("ViewModel")
-                if not ViewModel then return end
-
-                for _, Part in ipairs(ViewModel:GetDescendants()) do
-                    if IsViewmodelArmPart(Part, ViewModel) then
-                        if OriginalArmTransparency[Part] == nil then
-                            OriginalArmTransparency[Part] = Part.LocalTransparencyModifier
+                if ViewModel ~= ArmViewModel then
+                    ClearArmCache()
+                    ArmViewModel = ViewModel
+                    if ViewModel then
+                        local function AddPart(Part)
+                            if ArmsInvisible and IsViewmodelArmPart(Part, ViewModel) then
+                                if OriginalArmTransparency[Part] == nil then
+                                    OriginalArmTransparency[Part] = Part.LocalTransparencyModifier
+                                end
+                                if Part.LocalTransparencyModifier ~= 1 then Part.LocalTransparencyModifier = 1 end
+                            end
                         end
-                        Part.LocalTransparencyModifier = ArmsInvisible and 1 or OriginalArmTransparency[Part]
+                        for _, Part in ipairs(ViewModel:GetDescendants()) do AddPart(Part) end
+                        ArmAddedConnection = ViewModel.DescendantAdded:Connect(AddPart)
+                        ArmRemovedConnection = ViewModel.DescendantRemoving:Connect(function(Part)
+                            local Transparency = OriginalArmTransparency[Part]
+                            if Transparency ~= nil then
+                                if Part.Parent then Part.LocalTransparencyModifier = Transparency end
+                                OriginalArmTransparency[Part] = nil
+                            end
+                        end)
                     end
+                end
+                for Part in pairs(OriginalArmTransparency) do
+                    if Part.LocalTransparencyModifier ~= 1 then Part.LocalTransparencyModifier = 1 end
                 end
             end
 
@@ -26979,10 +27287,7 @@
                     ApplyArmsInvisible()
                     ArmsConnection = ConnectScheduled(RunService.RenderStepped, ApplyArmsInvisible)
                 else
-                    for Part, Transparency in pairs(OriginalArmTransparency) do
-                        if Part.Parent then Part.LocalTransparencyModifier = Transparency end
-                        OriginalArmTransparency[Part] = nil
-                    end
+                    ClearArmCache()
                 end
             end
 
@@ -27001,11 +27306,30 @@
                 CurrentWeaponModel, OriginalWeaponScale = nil, nil
             end
 
+            local WeaponScan = {Dirty = true, Connections = {}}
+            local function ClearWeaponScan()
+                for _, Connection in ipairs(WeaponScan.Connections) do Connection:Disconnect() end
+                table.clear(WeaponScan.Connections)
+                WeaponScan.Model, WeaponScan.Dirty = nil, true
+            end
             local function ApplyWeaponSize()
                 local Camera = workspace.CurrentCamera
                 local ViewModel = Camera and Camera:FindFirstChild("ViewModel")
+                if WeaponScan.Model ~= ViewModel then
+                    ClearWeaponScan()
+                    WeaponScan.Model = ViewModel
+                    if ViewModel then
+                        local function Changed() WeaponScan.Dirty = true end
+                        WeaponScan.Connections[1] = ViewModel.DescendantAdded:Connect(Changed)
+                        WeaponScan.Connections[2] = ViewModel.DescendantRemoving:Connect(Changed)
+                    end
+                end
                 local Item = ViewModel and ViewModel:FindFirstChild("Item")
-                if not Item and ViewModel then
+                if not Item and CurrentWeaponModel and ViewModel and CurrentWeaponModel:IsDescendantOf(ViewModel) then
+                    Item = CurrentWeaponModel
+                end
+                if not Item and ViewModel and WeaponScan.Dirty then
+                    WeaponScan.Dirty = false
                     for _, Candidate in ipairs(ViewModel:GetDescendants()) do
                         if Candidate:IsA("Model") and Candidate:FindFirstChild("ItemRoot") then
                             Item = Candidate
@@ -27039,6 +27363,7 @@
                         ViewmodelConnection:Disconnect()
                         ViewmodelConnection = nil
                         RestoreItemSize()
+                        ClearWeaponScan()
                     end
                 end,
             })
@@ -27049,6 +27374,7 @@
                     ViewmodelConnection = nil
                 end
                 RestoreItemSize()
+                ClearWeaponScan()
             end)
             ViewmodelSection:Slider({
                 Name = "Weapon size", Flag = "WorldWeaponSize", Default = WeaponSizeMultiplier,
@@ -27821,6 +28147,10 @@
 
                 local QuestItems = OtherESPPage:Section({Name = "Quest items", Side = 1})
                 Toggle(QuestItems, "Enabled", "QuestItemESPEnabled", QuestItemESP, "Enabled", "Color")
+                Toggle(QuestItems, "Collectible items", "QuestItemESPItems", QuestItemESP, "Items")
+                Toggle(QuestItems, "Loot items", "QuestItemESPLootItems", QuestItemESP, "LootItems")
+                Toggle(QuestItems, "Interaction targets", "QuestItemESPInteractions", QuestItemESP, "Interactions")
+                Toggle(QuestItems, "Objective locations", "QuestItemESPLocations", QuestItemESP, "Locations")
                 Toggle(QuestItems, "Distance", "QuestItemESPDistance", QuestItemESP, "Distance")
                 Toggle(QuestItems, "Force render", "QuestItemESPForceRender", QuestItemESP, "ForceRender")
                 Toggle(QuestItems, "No distance limit", "QuestItemESPUnlimitedDistance", QuestItemESP, "UnlimitedDistance")
@@ -28194,6 +28524,7 @@
                 ModToggle(WeaponSection, "Instant equip", "InstantEquip")
                 ModToggle(WeaponSection, "Keep equip animation", "KeepEquipAnimation")
                 ModToggle(WeaponSection, "Sprint while shooting", "SprintShooting")
+                ModToggle(WeaponSection, "ADS while sprinting", "SprintADS")
                 ModToggle(AmmoSection, "Auto fill empty mags", "AutoFill")
                 ModToggle(AmmoSection, "Packet reload", "PacketReload")
                 ModToggle(AmmoSection, "Auto reload", "AutoReload")
