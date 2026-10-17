@@ -11229,15 +11229,18 @@
                     local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
                     if Humanoid and Humanoid.Health > 0 then
                         if Solution.ForceHit then
-                            -- Let Roblox calculate the surface position, normal, and distance together.
-                            -- A fabricated center hit can place the native impact effect in empty air.
+                            -- Never report a collision beyond this projectile's current step.
+                            -- The solution is shared, so unrelated/older trajectories must stay native.
                             local Offset = Part.Position - Origin
-                            if Offset.Magnitude > 0.001 then
+                            local Length = typeof(Direction) == "Vector3" and Direction.Magnitude or 0
+                            if Offset.Magnitude > 0.001 and Length > 0.001
+                                and Direction.Unit:Dot(Offset.Unit) > 0 then
                                 local Params = RaycastParams.new()
                                 Params.FilterType = Enum.RaycastFilterType.Include
                                 Params.FilterDescendantsInstances = {Part}
                                 Params.CollisionGroup = "WeaponRay"
-                                local Hit = Cast(Origin, Offset.Unit * (Offset.Magnitude + Part.Size.Magnitude), Params)
+                                local Segment = self.Mods.InstantBullet and Direction.Unit * 4000 or Direction
+                                local Hit = Cast(Origin, Segment, Params)
                                 if Hit then return Origin, Direction, Hit end
                             end
                             return Origin, Direction
@@ -11764,9 +11767,21 @@
 
             local AutoSprintState
             local SprintAnimationWeights = setmetatable({}, {__mode = "k"})
+            local SprintPoseStates = setmetatable({}, {__mode = "k"})
             local function UpdateSprintAnimation(State)
                 if Controller.Active and Controller.Mods.NoSprintAnimation and State
                     and State.player == Player and State.character == Player.Character then
+                    -- Weapon lowering is a separate pose blend, not the Sprint animation track.
+                    SprintPoseStates[State] = true
+                    local Tweens = State.tweens
+                    if Tweens then
+                        for _, Name in ipairs({"sprintTransitionIn", "sprintTransitionOut"}) do
+                            local Transition = Tweens[Name]
+                            if Transition then Transition:Cancel() end
+                        end
+                    end
+                    local Blend = State.lerpValues and State.lerpValues.sprint
+                    if Blend then Blend.Value = 0 end
                     local Track = State.clientAnimationTracks and State.clientAnimationTracks.Sprint
                     if Track and Track.IsPlaying then
                         if SprintAnimationWeights[Track] == nil then
@@ -11775,6 +11790,15 @@
                         Track:AdjustWeight(0, 0)
                     end
                 else
+                    for SavedState in pairs(SprintPoseStates) do
+                        local Tweens = SavedState.tweens
+                        if Tweens then
+                            for _, Name in ipairs({"sprintTransitionIn", "sprintTransitionOut"}) do
+                                if Tweens[Name] then Tweens[Name]:Cancel(); Tweens[Name] = nil end
+                            end
+                        end
+                        SprintPoseStates[SavedState] = nil
+                    end
                     for Track, Weight in pairs(SprintAnimationWeights) do
                         pcall(function() Track:AdjustWeight(Weight, 0) end)
                         SprintAnimationWeights[Track] = nil
@@ -26680,18 +26704,24 @@
             local GasMaskSoundOriginals = {}
 
             local function MuteGasMaskSound(Sound)
-                if not GasMaskSoundDisabled or not Sound:IsA("Sound") or Sound.Name ~= "Coughing"
+                if not GasMaskSoundDisabled or not Sound:IsA("Sound")
                     or GasMaskSoundOriginals[Sound] then return end
+                local NoInsetGui = PlayerGui:FindFirstChild("NoInsetGui")
+                local Overlay = NoInsetGui and NoInsetGui:FindFirstChild("MainFrame")
+                local ScreenEffects = Overlay and Overlay:FindFirstChild("ScreenEffects")
+                local Mask = ScreenEffects and ScreenEffects:FindFirstChild("Mask")
+                local IsMaskSound = Sound.Name == "GasMask" and Mask and Sound:IsDescendantOf(Mask)
                 local Radiation = Sound.Parent
                 local StatusEffects = Radiation and Radiation.Parent
                 local Notifications = StatusEffects and StatusEffects.Parent
                 local MainFrame = Notifications and Notifications.Parent
                 local MainGui = MainFrame and MainFrame.Parent
-                if not Radiation or Radiation.Name ~= "Radiation"
-                    or not StatusEffects or StatusEffects.Name ~= "StatusEffects"
-                    or not Notifications or Notifications.Name ~= "Notifications"
-                    or not MainFrame or MainFrame.Name ~= "MainFrame"
-                    or not MainGui or MainGui.Name ~= "MainGui" or MainGui.Parent ~= PlayerGui then return end
+                local IsCough = Sound.Name == "Coughing" and Radiation and Radiation.Name == "Radiation"
+                    and StatusEffects and StatusEffects.Name == "StatusEffects"
+                    and Notifications and Notifications.Name == "Notifications"
+                    and MainFrame and MainFrame.Name == "MainFrame"
+                    and MainGui and MainGui.Name == "MainGui" and MainGui.Parent == PlayerGui
+                if not IsMaskSound and not IsCough then return end
 
                 local Original = {Volume = Sound.Volume}
                 GasMaskSoundOriginals[Sound] = Original
@@ -26709,6 +26739,7 @@
                 end
                 if GasMaskSoundDisabled then
                     GasMaskSoundConnection = PlayerGui.DescendantAdded:Connect(MuteGasMaskSound)
+                    for _, Sound in ipairs(PlayerGui:QueryDescendants("Sound")) do MuteGasMaskSound(Sound) end
                     local MainGui = PlayerGui:FindFirstChild("MainGui")
                     local MainFrame = MainGui and MainGui:FindFirstChild("MainFrame")
                     local Notifications = MainFrame and MainFrame:FindFirstChild("Notifications")
@@ -26729,7 +26760,7 @@
                 Name = "Remove gas mask sound",
                 Flag = "GasMaskSoundDisabled",
                 Default = false,
-                Tooltip = {Name = "Remove gas mask sound", Description = "Mutes the local radiation cough sound."},
+                Tooltip = {Name = "Remove gas mask sound", Description = "Mutes GP-5/GP-7 mask breathing and radiation coughing. Restores volume when disabled."},
                 Callback = SetGasMaskSoundDisabled,
             })
             table.insert(UnloadCallbacks, function() SetGasMaskSoundDisabled(false) end)
