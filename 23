@@ -11743,19 +11743,25 @@
             end
 
             local AutoSprintState
-            local AutoSprintShiftHeld = false
-            local SprintPoseState, SprintPoseOriginal, SprintPoseApplied
-            local function RestoreSprintPose()
-                if SprintPoseState and SprintPoseState.sprintIdleOffset == SprintPoseApplied then
-                    SprintPoseState.sprintIdleOffset = SprintPoseOriginal
+            local SprintAnimationWeights = setmetatable({}, {__mode = "k"})
+            local function UpdateSprintAnimation(State)
+                if Controller.Active and Controller.Mods.NoSprintAnimation and State
+                    and State.player == Player and State.character == Player.Character then
+                    local Track = State.clientAnimationTracks and State.clientAnimationTracks.Sprint
+                    if Track and Track.IsPlaying then
+                        if SprintAnimationWeights[Track] == nil then
+                            SprintAnimationWeights[Track] = Track.WeightTarget
+                        end
+                        Track:AdjustWeight(0, 0)
+                    end
+                else
+                    for Track, Weight in pairs(SprintAnimationWeights) do
+                        pcall(function() Track:AdjustWeight(Weight, 0) end)
+                        SprintAnimationWeights[Track] = nil
+                    end
                 end
-                SprintPoseState, SprintPoseOriginal, SprintPoseApplied = nil, nil, nil
             end
             function Controller:ReleaseAutoSprint()
-                if AutoSprintShiftHeld then
-                    AutoSprintShiftHeld = false
-                    if type(keyrelease) == "function" then pcall(keyrelease, 0xA0) end
-                end
                 local State = AutoSprintState
                 AutoSprintState = nil
                 if not State then return end
@@ -11775,13 +11781,7 @@
                     and not Library.MenuOpen and not Library.Spectating and not Input:GetFocusedTextBox()
                     and Humanoid and Humanoid.Health > 0 and not Humanoid.Sit and not Humanoid.PlatformStand
                 if AutoSprintState and AutoSprintState ~= State then self:ReleaseAutoSprint() end
-                if Sprint then
-                    if type(keypress) == "function" and type(keyrelease) == "function"
-                        and (not AutoSprintShiftHeld or not Input:IsKeyDown(Enum.KeyCode.LeftShift)) then
-                        local OK = pcall(keypress, 0xA0)
-                        AutoSprintShiftHeld = OK or AutoSprintShiftHeld
-                    end
-                else
+                if not Sprint then
                     self:ReleaseAutoSprint()
                 end
                 if Sprint and Available and type(State.sprint) == "function" then
@@ -11795,18 +11795,7 @@
                     end
                 end
 
-                if Available and self.Mods.NoSprintAnimation and typeof(State.weaponOffSet) == "CFrame"
-                    and typeof(State.sprintIdleOffset) == "CFrame" then
-                    if SprintPoseState ~= State then RestoreSprintPose() end
-                    if SprintPoseState ~= State or State.sprintIdleOffset ~= SprintPoseApplied then
-                        SprintPoseState, SprintPoseOriginal = State, State.sprintIdleOffset
-                    end
-                    -- Only replace the sideways weapon pose; leave movement and animation tracks alone.
-                    SprintPoseApplied = State.weaponOffSet
-                    State.sprintIdleOffset = SprintPoseApplied
-                else
-                    RestoreSprintPose()
-                end
+                UpdateSprintAnimation(Available and State or nil)
             end
 
             local NextStateSetup, SetupState, SetupSprings = 0, nil, nil
@@ -12235,6 +12224,7 @@
                         local OffsetActive = Controller.ViewmodelOffsetActive and Controller.ViewmodelOffsetActive()
                         if OffsetActive then Controller.BeforeViewmodelUpdate(State) end
                         local Results = table.pack(pcall(Original, State, ...))
+                        Controller:UpdateSprintMods(State)
                         if OffsetActive then Controller.AfterViewmodelUpdate(State) end
                         if not Results[1] then error(Results[2], 0) end
                         return table.unpack(Results, 2, Results.n)
@@ -12251,10 +12241,13 @@
                         and not (Legit and LegitSettings and (LegitSettings.Enabled or LegitSettings.TriggerEnabled)) then
                         if OffsetActive then
                             local Results = table.pack(Original(State, ...))
+                            UpdateSprintAnimation(State)
                             Controller.AfterViewmodelUpdate(State)
                             return table.unpack(Results, 1, Results.n)
                         end
-                        return Original(State, ...)
+                        local Results = table.pack(Original(State, ...))
+                        UpdateSprintAnimation(State)
+                        return table.unpack(Results, 1, Results.n)
                     end
                     local NativeMouseHeld = State.MouseHeld
                     Controller:TryRageReload(State)
@@ -12268,6 +12261,7 @@
                     local Results = table.pack(pcall(Original, State, ...))
                     if Injected then State.MouseHeld = NativeMouseHeld end
                     if not Results[1] then error(Results[2], 0) end
+                    UpdateSprintAnimation(State)
                     if OffsetActive then Controller.AfterViewmodelUpdate(State) end
                     if Legit and State.player == Player then Legit:AfterWeaponUpdate(State) end
                     if SprintShooting then
@@ -12545,7 +12539,7 @@
                 Line.BorderSizePixel = 0
                 table.insert(Connections, ConnectScheduled(RunService.RenderStepped, function(Delta)
                     if Controller.Mods.AlwaysSprint or Controller.Mods.NoSprintAnimation or AutoSprintState
-                        or SprintPoseState or AutoSprintShiftHeld then
+                        or next(SprintAnimationWeights) then
                         if not LiveFPS or LiveFPS.character ~= Player.Character then DiscoverFPS() end
                         Controller:UpdateSprintMods(LiveFPS)
                     end
@@ -12648,7 +12642,7 @@
                 table.insert(Connections, Input.WindowFocused:Connect(function() ManipulationFocused = true; ReloadFocused = true end))
                 table.insert(Connections, Player.CharacterRemoving:Connect(function()
                     Controller:ReleaseAutoSprint()
-                    RestoreSprintPose()
+                    UpdateSprintAnimation(nil)
                     Controller:RestoreManipulation()
                     Controller:RestoreForceHitbox()
                 end))
@@ -26594,6 +26588,65 @@
             })
 
             local PlayerGui = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+            local GasMaskSoundDisabled = false
+            local GasMaskSoundConnection
+            local GasMaskSoundOriginals = {}
+
+            local function MuteGasMaskSound(Sound)
+                if not GasMaskSoundDisabled or not Sound:IsA("Sound") or Sound.Name ~= "Coughing"
+                    or GasMaskSoundOriginals[Sound] then return end
+                local Radiation = Sound.Parent
+                local StatusEffects = Radiation and Radiation.Parent
+                local Notifications = StatusEffects and StatusEffects.Parent
+                local MainFrame = Notifications and Notifications.Parent
+                local MainGui = MainFrame and MainFrame.Parent
+                if not Radiation or Radiation.Name ~= "Radiation"
+                    or not StatusEffects or StatusEffects.Name ~= "StatusEffects"
+                    or not Notifications or Notifications.Name ~= "Notifications"
+                    or not MainFrame or MainFrame.Name ~= "MainFrame"
+                    or not MainGui or MainGui.Name ~= "MainGui" or MainGui.Parent ~= PlayerGui then return end
+
+                local Original = {Volume = Sound.Volume}
+                GasMaskSoundOriginals[Sound] = Original
+                Original.Connection = Sound:GetPropertyChangedSignal("Volume"):Connect(function()
+                    if GasMaskSoundDisabled and Sound.Volume ~= 0 then Sound.Volume = 0 end
+                end)
+                Sound.Volume = 0
+            end
+
+            local function SetGasMaskSoundDisabled(Disabled)
+                GasMaskSoundDisabled = Disabled == true
+                if GasMaskSoundConnection then
+                    GasMaskSoundConnection:Disconnect()
+                    GasMaskSoundConnection = nil
+                end
+                if GasMaskSoundDisabled then
+                    GasMaskSoundConnection = PlayerGui.DescendantAdded:Connect(MuteGasMaskSound)
+                    local MainGui = PlayerGui:FindFirstChild("MainGui")
+                    local MainFrame = MainGui and MainGui:FindFirstChild("MainFrame")
+                    local Notifications = MainFrame and MainFrame:FindFirstChild("Notifications")
+                    local StatusEffects = Notifications and Notifications:FindFirstChild("StatusEffects")
+                    local Radiation = StatusEffects and StatusEffects:FindFirstChild("Radiation")
+                    local Coughing = Radiation and Radiation:FindFirstChild("Coughing")
+                    if Coughing then MuteGasMaskSound(Coughing) end
+                else
+                    for Sound, Original in pairs(GasMaskSoundOriginals) do
+                        Original.Connection:Disconnect()
+                        if Sound.Parent then Sound.Volume = Original.Volume end
+                    end
+                    table.clear(GasMaskSoundOriginals)
+                end
+            end
+
+            RemovalsSection:Toggle({
+                Name = "Remove gas mask sound",
+                Flag = "GasMaskSoundDisabled",
+                Default = false,
+                Tooltip = {Name = "Remove gas mask sound", Description = "Mutes the local radiation cough sound."},
+                Callback = SetGasMaskSoundDisabled,
+            })
+            table.insert(UnloadCallbacks, function() SetGasMaskSoundDisabled(false) end)
+
             local NoVisorEnabled = false
             local NoVisorConnection
             local NoVisorOriginals = {}
@@ -26736,7 +26789,16 @@
                 if Item and Part:IsDescendantOf(Item) then return false end
 
                 local Name = Part.Name:lower()
-                if Name:find("arm", 1, true) or Name:find("hand", 1, true) then return true end
+                if Name:find("arm", 1, true) or Name:find("hand", 1, true)
+                    or Name:find("glove", 1, true) then return true end
+
+                -- Some viewmodels put gloves in a container and give the mesh parts generic names.
+                local Parent = Part.Parent
+                while Parent and Parent ~= ViewModel do
+                    local ParentName = Parent.Name:lower()
+                    if ParentName:find("glove", 1, true) then return true end
+                    Parent = Parent.Parent
+                end
 
                 -- This game puts the arm sleeves in a separate shirt model using RU/RL/LU/LL names.
                 if Name:match("^[rl][ul]$") then
