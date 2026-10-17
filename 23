@@ -13691,7 +13691,7 @@
         local SoundSystem = SoundService:FindFirstChild("SoundSystem")
         local SoundModules = SoundSystem and SoundSystem:FindFirstChild("Modules")
         local SoundModule = SoundModules and SoundModules:FindFirstChild("SoundHandler")
-        local PendingSelfDecoys, LastSelfDecoyAt = 0, 0
+        local PendingSelfDecoys = {}
         if SoundModule then
             SoundHandler = require(SoundModule)
             OriginalPlayEquippedItem = SoundHandler.PlayEquippedItem
@@ -13699,11 +13699,16 @@
                 local ReloadSounds = {ReloadSound = true, ReloadSoundNoMag = true, ReloadSoundChamber = true}
                 CustomPlayEquippedItem = function(Self, Name, Character, Mode, ...)
                     if E.Active and E.GunSounds.Decoy and E.GunSounds.MuteSelf and Character == Player.Character
-                        and Name == "FireSound" and Mode == 1 then
+                        and Mode == 1 then
                         local Now = os.clock()
-                        if Now - LastSelfDecoyAt <= 2 and PendingSelfDecoys > 0 then
-                            PendingSelfDecoys -= 1
-                            return
+                        for Index = #PendingSelfDecoys, 1, -1 do
+                            local Pending = PendingSelfDecoys[Index]
+                            if Pending.Expires < Now or Pending.Character ~= Character then
+                                table.remove(PendingSelfDecoys, Index)
+                            elseif Pending.Name == Name then
+                                table.remove(PendingSelfDecoys, Index)
+                                return
+                            end
                         end
                     end
                     if E.Active and E.GunSounds.Masked and Character == Player.Character and ReloadSounds[Name] then
@@ -13756,9 +13761,37 @@
         end
         do
             local NextDecoy = 0
+            local FireSoundNames = {"FireSound", "FireSoundSuppressed", "FireSoundSupressed", "Fire", "FireFarSound"}
+            local function HeldFireSound(Character)
+                local Holding = Character:FindFirstChild("Holding")
+                local Item = Holding and Holding:IsA("ObjectValue") and Holding.Value
+                if not Item then return end
+                local Template = Item:IsA("ObjectValue") and Item.Value or Item
+                local Model = Template and Character:FindFirstChild(Template.Name)
+                if not Model then
+                    for _, Candidate in ipairs(Character:GetChildren()) do
+                        local Ref = Candidate:IsA("Model") and Candidate:FindFirstChild("SelfRef")
+                        if Ref and Ref:IsA("ObjectValue") and Ref.Value == Item then Model = Candidate; break end
+                    end
+                end
+                if not Model or not Model:IsA("Model") then return end
+                -- Native SoundHandler.PlayEquippedItem resolves PrimaryPart.Sounds.
+                local Primary, ItemRoot = Model.PrimaryPart, Model:FindFirstChild("ItemRoot")
+                local Sounds = Primary and Primary:FindFirstChild("Sounds")
+                    or ItemRoot and ItemRoot:FindFirstChild("Sounds")
+                if not Sounds then return end
+                for _, Name in ipairs(FireSoundNames) do
+                    local Sound = Sounds:FindFirstChild(Name)
+                    if IsFireSound(Sound) then return Sound.Name end
+                end
+                for _, Sound in ipairs(Sounds:GetChildren()) do
+                    if IsFireSound(Sound) then return Sound.Name end
+                end
+            end
             Connect(Run.Heartbeat, function()
                 if not E.Active or not E.GunSounds.Decoy or not E.Focused or Input:GetFocusedTextBox() then
                     NextDecoy = 0
+                    table.clear(PendingSelfDecoys)
                     return
                 end
                 local Now = os.clock()
@@ -13766,21 +13799,19 @@
                 NextDecoy = Now + math.clamp(tonumber(E.GunSounds.Interval) or 0.5, 0, 2)
                 local Character = Player.Character
                 local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
-                local Holding = Character and Character:FindFirstChild("Holding")
-                local Item = Holding and Holding.Value
-                local Template = Item and Item.Value
-                local Model = Template and Character:FindFirstChild(Template.Name)
-                local Root = Model and (Model:FindFirstChild("ItemRoot") or Model.PrimaryPart)
-                local Sounds = Root and Root:FindFirstChild("Sounds")
+                local FireSound = Character and HeldFireSound(Character)
                 local Remotes = SoundSystem and SoundSystem:FindFirstChild("Remotes")
                 local Remote = Remotes and Remotes:FindFirstChild("ReplicateItemSoundPlay")
-                if Humanoid and Humanoid.Health > 0 and Sounds and Sounds:FindFirstChild("FireSound") and Remote then
+                if Humanoid and Humanoid.Health > 0 and FireSound and Remote then
                     if E.GunSounds.MuteSelf then
-                        if Now - LastSelfDecoyAt > 2 then PendingSelfDecoys = 0 end
-                        PendingSelfDecoys += 1
-                        LastSelfDecoyAt = Now
+                        for Index = #PendingSelfDecoys, 1, -1 do
+                            local Pending = PendingSelfDecoys[Index]
+                            if Pending.Expires < Now or Pending.Character ~= Character then table.remove(PendingSelfDecoys, Index) end
+                        end
+                        if #PendingSelfDecoys >= 128 then table.remove(PendingSelfDecoys, 1) end
+                        PendingSelfDecoys[#PendingSelfDecoys + 1] = {Name = FireSound, Character = Character, Expires = Now + 2}
                     end
-                    Remote:FireServer("FireSound")
+                    Remote:FireServer(FireSound)
                 end
             end)
         end
