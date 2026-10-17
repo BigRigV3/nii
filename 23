@@ -14396,9 +14396,10 @@
         end
         function E:UpdateThirdPerson()
             local S, Camera = self.ThirdPerson, workspace.CurrentCamera
+            local DoorAssist = self.NoclipDoorThirdPerson == true
             local Character = Player.Character
             local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
-            if not S.Enabled or not self:BindActive("ThirdPersonKeybind", S.Held) or not Camera or not Humanoid or Humanoid.Health <= 0 then RestoreThirdPerson(); PruneVisibilityModels(nil, nil); return end
+            if (not DoorAssist and (not S.Enabled or not self:BindActive("ThirdPersonKeybind", S.Held))) or not Camera or not Humanoid or Humanoid.Health <= 0 then RestoreThirdPerson(); PruneVisibilityModels(nil, nil); return end
             if not ThirdOriginal then ThirdOriginal = {Mode = Player.CameraMode, Min = Player.CameraMinZoomDistance, Max = Player.CameraMaxZoomDistance, Mouse = Input.MouseBehavior} end
             local Menu = getgenv().Library
             if Menu and Menu.MenuOpen then
@@ -14415,10 +14416,11 @@
             end
             self.ThirdPersonActive = true
             Player.CameraMode = Enum.CameraMode.Classic
-            Player.CameraMaxZoomDistance = math.max(S.Distance, Player.CameraMinZoomDistance)
-            Player.CameraMinZoomDistance, Player.CameraMaxZoomDistance = S.Distance, S.Distance
-            local Shift = S.Mode == "Shift lock"
-            Humanoid.AutoRotate = Shift and false or ThirdHumanoid.AutoRotate
+            local Distance = DoorAssist and math.max(6, S.Distance) or S.Distance
+            Player.CameraMaxZoomDistance = math.max(Distance, Player.CameraMinZoomDistance)
+            Player.CameraMinZoomDistance, Player.CameraMaxZoomDistance = Distance, Distance
+            local Shift = not DoorAssist and S.Mode == "Shift lock"
+            Humanoid.AutoRotate = not (self.NoclipActive or Shift) and ThirdHumanoid.AutoRotate or false
             if Shift then
                 Input.MouseBehavior = Enum.MouseBehavior.LockCenter
                 local Root = Character:FindFirstChild("HumanoidRootPart")
@@ -18439,7 +18441,7 @@
         end
         local function ObjectiveStatus(E)
             local Remaining = math.max(0, E.Amount - E.Progress)
-            if E.Carrying then return E.Survive and "Carrying item - survive extraction" or "Carrying quest item" end
+            if E.Carrying then return "Carrying quest item - ready to submit" end
             if E.Complete or Remaining == 0 then return "Complete" end
             if E.MapName and E.MapName ~= workspace:GetAttribute("MapName") then return "Travel to " .. E.MapName end
             if E.Type == "HandOver" then
@@ -18716,8 +18718,8 @@
                                     if not (O:GetAttribute("Optional") or Objective and Objective.Optional) then
                                         Required += 1
                                         if not (O:GetAttribute("Complete") or O:GetAttribute("Carrying") or O:GetAttribute("Placed")) then Ready = false end
-                                        local Survive = O:GetAttribute("Survive") or Objective and Objective.Conditions and table.find(Objective.Conditions, "Survive")
-                                        if O:GetAttribute("Carrying") and Survive and not O:GetAttribute("Complete") then Ready = false end
+                                        -- The quest server accepts carried fetch items on field maps,
+                                        -- including objectives marked Survive. Let it validate the hand-in.
                                     end
                                 end
                                 if Ready and Required > 0 then Call(Quest.Name, function() return API:complete(Quest.Name) end) end
@@ -21264,6 +21266,10 @@
         local API, OriginalUpdate, WrappedUpdate
         local Saved = setmetatable({}, {__mode = "k"})
         local Alive, NextCheck = true, 0
+        local function NeedsInteractionObserver()
+            local Noclip = E.Noclip
+            return Noclip and Noclip.Enabled and Noclip.Held and Noclip.DoorAssist
+        end
         local function ReadLimit()
             local Modules = Storage:FindFirstChild("Modules")
             local Module = Modules and Modules:FindFirstChild("UniversalTables")
@@ -21302,7 +21308,7 @@
         end
         function E:RefreshInteractionRange()
             if not Alive then return end
-            if not self.Active or not Settings.Enabled then Detach(); return end
+            if not self.Active or not (Settings.Enabled or NeedsInteractionObserver()) then Detach(); return end
             ReadLimit()
             local PlayerGui = Player:FindFirstChild("PlayerGui")
             local MainGui = PlayerGui and PlayerGui:FindFirstChild("MainGui")
@@ -21312,7 +21318,10 @@
             local OK, Current = pcall(require, Module)
             if not OK or type(Current) ~= "table" or type(Current.update) ~= "function" then Detach(); return end
             if API == Current and Current.update == WrappedUpdate then
-                for Controller in pairs(Saved) do Apply(Controller) end
+                for Controller, State in pairs(Saved) do
+                    if Settings.Enabled then Apply(Controller)
+                    else RestoreController(Controller, State); Saved[Controller] = nil end
+                end
                 return
             end
             Detach()
@@ -21325,13 +21334,18 @@
                     local State = Saved[Controller]
                     if State then RestoreController(Controller, State); Saved[Controller] = nil end
                 end
-                return NativeUpdate(Controller, ...)
+                local Results = table.pack(NativeUpdate(Controller, ...))
+                if Alive and E.Active and E.OnNoclipInteractionUpdated then
+                    local OK, Error = pcall(E.OnNoclipInteractionUpdated, Controller)
+                    if not OK and E.Noclip then E.Noclip.LastError = tostring(Error) end
+                end
+                return table.unpack(Results, 1, Results.n)
             end
             Current.update = WrappedUpdate
         end
         local Connection = ConnectScheduled(Run.Heartbeat, function()
             if not Alive then return end
-            if not E.Active or not Settings.Enabled then
+            if not E.Active or not (Settings.Enabled or NeedsInteractionObserver()) then
                 if API then Detach() end
                 return
             end
@@ -21748,8 +21762,48 @@
                 local Input = game:GetService("UserInputService")
                 local Player = Players.LocalPlayer
                 local Alive = true
-                local Settings = {Enabled = false, Held = false, Kinds = {"Floors", "Walls"}, Layers = 1, Speed = 2}
+                local Settings = {Enabled = false, Held = false, Kinds = {"Floors", "Walls"}, Layers = 1, Speed = 2,
+                    DoorAssist = true}
                 Effects.Noclip = Settings
+                local Clip, NextDoorPress = nil, 0
+                local function IsDoor(Part)
+                    while Part and Part ~= workspace do
+                        if Part:GetAttribute("DoorState") ~= nil or Part:GetAttribute("KeyDoor") ~= nil then return Part end
+                        if Part.Name:lower():find("door", 1, true) then return true end
+                        Part = Part.Parent
+                    end
+                    return false
+                end
+                local function Visible(Object, Root)
+                    while Object do
+                        if Object:IsA("GuiObject") and not Object.Visible then return false end
+                        if Object:IsA("ScreenGui") and not Object.Enabled then return false end
+                        if Object == Root then return true end
+                        Object = Object.Parent
+                    end
+                    return false
+                end
+                local function UpdateDoorAssist(CurrentClip, Interaction)
+                    local Active = Settings.DoorAssist and CurrentClip and CurrentClip.door == true
+                    Effects.NoclipDoorThirdPerson = Active == true
+                    if not Active or not Interaction or not Alive or not Effects.Active or not Effects.Focused
+                        or not Settings.Enabled or not Settings.Held or Library.MenuOpen or Input:GetFocusedTextBox()
+                        or os.clock() < NextDoorPress then return end
+                    if Interaction.player ~= Player or Interaction.character ~= Player.Character
+                        or Interaction.interactionKeyDown or type(Interaction.InteractClick) ~= "function" then return end
+                    local Target, Option = Interaction.deepAncestor, Interaction.selectedInteractionOption
+                    if not Target or not Target.Parent or not Option or Option.Name ~= "OpenDoor" then return end
+                    if Target:GetAttribute("DoorState") == nil then return end
+                    local Part = CurrentClip.part
+                    if not Part or (Part ~= Target and not Part:IsDescendantOf(Target)) then return end
+                    if typeof(Option) ~= "Instance" or not Option:IsA("GuiObject")
+                        or not Visible(Option, Player.PlayerGui) then return end
+                    if Interaction.SpeechBox and Interaction.SpeechBox.Visible then return end
+                    for _, Frame in ipairs(Interaction.CancelTables or {}) do if Frame.Visible then return end end
+                    NextDoorPress = os.clock() + 0.1
+                    Interaction:InteractClick()
+                end
+                Effects.OnNoclipInteractionUpdated = function(Interaction) UpdateDoorAssist(Clip, Interaction) end
                 local function Rig()
                     local Character = Player.Character
                     return Character, Character and Character:FindFirstChild("HumanoidRootPart"),
@@ -21889,7 +21943,7 @@
                     end
                 end
 
-                local Clip = nil
+                Clip = nil
                 local Candidate = nil
                 local ProbeReason = nil
                 local LastProbe = 0
@@ -22150,6 +22204,8 @@
                 end
 
                 local function Stop(u2, u3)
+                    Effects.NoclipDoorThirdPerson = false
+                    Effects:UpdateThirdPerson()
                     local u9 = Clip
                     if not u9 then
                         return
@@ -22230,6 +22286,7 @@
                     u12.hum = u15
                     u12.stood = u7
                     u12.autoRotate = u15.AutoRotate
+                    u12.door = IsDoor(u12.part) ~= false
 
                     if u12.kind == "floor" then
                         u12.u = u12.surf.Y - u14.Position.Y
@@ -22263,6 +22320,7 @@
                     u15.AutoRotate = false
                     Clip = u12
                     Effects.NoclipActive = true
+                    UpdateDoorAssist(u12)
                 end
 
                 local function Advance(u20, u21)
@@ -22359,6 +22417,7 @@
                         elseif not q then
                             Stop(Clip.phase >= 2 and "finish" or "back")
                         else
+                            UpdateDoorAssist(Clip)
                             local OK, Error = pcall(Advance, y, T)
                             if not OK then
                                 ReportNoclipError("advance", Error)
@@ -22428,6 +22487,7 @@
 
 
                 local function Reset()
+                    Effects.NoclipDoorThirdPerson = false
                     if Clip then Stop("back") end
                     Candidate, DwellPart, ProbeReason = nil, nil, nil
                     Effects.NoclipActive = false
@@ -22438,9 +22498,23 @@
                     Callback = function(Value)
                         Settings.Enabled = Value
                         if not Value then Reset() end
+                        if Effects.RefreshInteractionRange then Effects:RefreshInteractionRange() end
                     end}):Keybind({Flag = "NoclipKeybind", Default = Enum.KeyCode.Y, Mode = "Toggle",
-                        Callback = function(Value) Settings.Held = Value == true end})
+                        Callback = function(Value)
+                            Settings.Held = Value == true
+                            if Effects.RefreshInteractionRange then Effects:RefreshInteractionRange() end
+                        end})
                 Section:Label("Look at a nearby floor or wall to slide through.")
+                Section:Toggle({Name = "Door assist", Flag = "NoclipDoorAssist", Default = true,
+                    Tooltip = {Name = "Door assist", Description = "Uses third person during door clips and activates the game's Open Door interaction when it appears."},
+                    Callback = function(Value)
+                        Settings.DoorAssist = Value == true
+                        if not Value then
+                            Effects.NoclipDoorThirdPerson = false
+                            Effects:UpdateThirdPerson()
+                        end
+                        if Effects.RefreshInteractionRange then Effects:RefreshInteractionRange() end
+                    end})
                 Section:Dropdown({Name = "Clip through", Flag = "NoclipKinds", Items = {"Floors", "Walls"},
                     Default = {"Floors", "Walls"}, Multi = true,
                     Callback = function(Value) Settings.Kinds = Value end})
@@ -22458,6 +22532,7 @@
                     Removing:Disconnect()
                     Focus:Disconnect()
                     Reset()
+                    Effects.OnNoclipInteractionUpdated = nil
                     Gui:Destroy()
                     ProbePart:Destroy()
                     if Effects.Noclip == Settings then Effects.Noclip = nil end
