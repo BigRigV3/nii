@@ -18412,7 +18412,8 @@
         local OK, API = CallQuestAPI(function() return Module and require(Module) end)
         if not OK or type(API) ~= "table" then API = nil end
         local S = {Enabled = false, Window = true, Line = true, TargetText = true, ShowComplete = false, OptionalRoutes = false, HighlightItems = true, Selected = "All active quests",
-            Revision = 0, Needed = {}, Entries = {}, Busy = false}
+            Revision = 0, Needed = {}, Entries = {}, Busy = false,
+            AutoAccept = false, AutoHandOver = false, AutoComplete = false}
         Library.QuestHelper = S
         local Alive, Elapsed, Target, LastSignature = true, 1, nil, nil
         local BoundQuestRoot, QuestStateConnections, QuestObjectConnections = nil, {}, {}
@@ -18888,27 +18889,40 @@
             local Root = QuestRoot()
             return Root and Root:GetChildren() or {}
         end
-        local function Perform(Action, OnlySelected)
+        local AutoRetries, ActionWorker, NextAutomation = {}, nil, 0
+        local function AutomationEnabled(Action)
+            return Action == "Activate" and S.AutoAccept or Action == "HandOver" and S.AutoHandOver
+                or Action == "Complete" and S.AutoComplete
+        end
+        local function Perform(Action, OnlySelected, Automatic)
             if OnlySelected and S.Selected == "All active quests" then Result:SetText("Select one active quest first"); return end
             if S.Busy then Result:SetText("Quest action already running"); return end
             if not API or not QuestRoot() then Result:SetText("Quests are unavailable in this game mode"); return end
             S.Busy = true
-            task.spawn(function()
+            ActionWorker = task.defer(function()
                 local Done, Failed, Tried, FirstFailure = 0, 0, {}, nil
+                local CurrentAction = Action
                 local function Call(Key, Fn)
-                    if not Alive or Tried[Key] then return end
-                    Tried[Key] = true
+                    local RetryKey = CurrentAction .. ":" .. tostring(Key)
+                    if not Alive or Tried[RetryKey] or Automatic and not AutomationEnabled(CurrentAction) then return end
+                    if Automatic and os.clock() < (AutoRetries[RetryKey] or 0) then return end
+                    Tried[RetryKey] = true
                     Result:SetText("Processing " .. tostring(Key) .. "...")
                     local Success, Value, Reason = CallQuestAPI(Fn)
+                    if not Alive then return end
                     if Success and Value ~= nil and Value ~= false then
                         Done += 1
+                        if Automatic then AutoRetries[RetryKey] = os.clock() + 3 end
                     else
                         Failed += 1
+                        if Automatic then AutoRetries[RetryKey] = os.clock() + 10 end
                         FirstFailure = FirstFailure or tostring(Reason or (not Success and Value) or "Game rejected the quest action")
                     end
                     task.wait(0.2)
                 end
-                local Success, Error = pcall(function()
+                local function RunAction(Action)
+                    CurrentAction = Action
+                    if not Alive or Automatic and not AutomationEnabled(Action) then return end
                     if Action == "ActivateOne" then
                         RefreshAvailable(true)
                         local ID = AvailableChoice == "Next available quest" and AvailableIDs[1] or AvailableLabels[AvailableChoice]
@@ -18918,10 +18932,11 @@
                         for _, Def in pairs(API.Quests or {}) do if Def.QuestGivenBy then Givers[Def.QuestGivenBy] = true end end
                         for Giver in pairs(Givers) do
                             for _ = 1, 8 do
-                                if not Alive then break end
+                                if not Alive or Automatic and not AutomationEnabled(Action) then break end
                                 local Success, ID = CallQuestAPI(API.GetAvailableQuest, API, Player, Giver)
                                 if not Success then error(ID) end
-                                if not ID or Tried[ID] then break end
+                                if not ID or Tried[Action .. ":" .. tostring(ID)]
+                                    or Automatic and os.clock() < (AutoRetries[Action .. ":" .. tostring(ID)] or 0) then break end
                                 Call(ID, function() return API.new(ID) end)
                             end
                         end
@@ -18952,9 +18967,18 @@
                             end
                         end
                     end
+                end
+                local Success, Error = pcall(function()
+                    if Automatic then
+                        RunAction("HandOver")
+                        RunAction("Complete")
+                        RunAction("Activate")
+                    else RunAction(Action) end
                 end)
                 S.Busy = false
-                if Alive then
+                ActionWorker = nil
+                if Automatic and not Success then NextAutomation = os.clock() + 10 end
+                if Alive and (not Automatic or Done + Failed > 0 or not Success) then
                     local Text = Success and (Done + Failed == 0 and "No matching quests or items are ready" or string.format("Accepted %d | Rejected %d", Done, Failed)) or "Quest action failed: " .. tostring(Error)
                     if Success and FirstFailure then Text ..= " | " .. FirstFailure end
                     Result:SetText(Text)
@@ -18966,6 +18990,23 @@
         Actions:Button():Add("Accept all available quests", function() Perform("Activate") end)
         Actions:Button():Add("Hand over owned quest items", function() Perform("HandOver") end)
         Actions:Button():Add("Complete all ready quests", function() Perform("Complete") end)
+        for _, Option in ipairs({
+            {"Auto accept quests", "AutoAccept"},
+            {"Auto hand over quest items", "AutoHandOver"},
+            {"Auto complete ready quests", "AutoComplete"},
+        }) do
+            local Key = Option[2]
+            Actions:Toggle({Name = Option[1], Flag = "QuestHelper" .. Key, Default = false,
+                Callback = function(Value)
+                    S[Key] = Value == true
+                    if Value then table.clear(AutoRetries); NextAutomation = 0 end
+                end})
+        end
+        local AutomationConnection = ConnectScheduled(Run.Heartbeat, function()
+            if not (S.AutoAccept or S.AutoHandOver or S.AutoComplete) or os.clock() < NextAutomation then return end
+            if not Alive or S.Busy or Library.ConfigLoading or not API or not QuestRoot() then return end
+            Perform("Automatic", false, true)
+        end, 1)
         local RefreshConnection = ConnectScheduled(Run.Heartbeat, function(Delta)
             if not S.Enabled and not Page.Active then return end
             Elapsed += Delta
@@ -19029,7 +19070,10 @@
         UnloadCallbacks[#UnloadCallbacks + 1] = function()
             Alive, S.Enabled = false, false
             RestoreText()
-            RefreshConnection:Disconnect(); RenderConnection:Disconnect()
+            RefreshConnection:Disconnect(); RenderConnection:Disconnect(); AutomationConnection:Disconnect()
+            if ActionWorker then pcall(task.cancel, ActionWorker); ActionWorker = nil end
+            S.Busy, S.AutoAccept, S.AutoHandOver, S.AutoComplete = false, false, false, false
+            table.clear(AutoRetries)
             for Id in pairs(Routes) do DestroyRoute(Id) end
             for _, C in ipairs(WorldConnections) do C:Disconnect() end
             for _, C in ipairs(QuestStateConnections) do C:Disconnect() end
