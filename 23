@@ -3161,7 +3161,14 @@
                             Library.Flags[Slider.Flag] = Slider.Value
 
                             Items["Accent"]:Tween(TweenInfo.new(Library.Tween.Time, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2New((Slider.Value - Data.Min) / (Data.Max - Data.Min), 0, 1, 0)})
-                            Items["Value"].Instance.Text = FormatDistanceSlider(Slider.Value, Data.Suffix)
+                            if Slider.Flag == "ESPDeadBodiesMinValue" then
+                                local Value = Slider.Value
+                                local Divisor, Unit = Value >= 1000000 and 1000000 or 1000, Value >= 1000000 and "M" or "K"
+                                local Text = Value >= 1000 and string.format("%.2f", Value / Divisor):gsub("0+$", ""):gsub("%.$", "") .. Unit or tostring(Value)
+                                Items["Value"].Instance.Text = Text .. (Data.Suffix or "")
+                            else
+                                Items["Value"].Instance.Text = FormatDistanceSlider(Slider.Value, Data.Suffix)
+                            end
 
                             if Data.Callback then 
                                 Library:SafeCall(Data.Callback, Slider.Value)
@@ -4515,6 +4522,84 @@
                                     Colorpicker:Set(Library.CopiedColor)
                                 end
                             end)
+
+                            local HoverPaintEnabled = false
+                            local HoverPaintOriginals = {}
+                            local HoverPaintTarget, HoverPaintTargetProperty
+                            local function RestoreHoverPaintPreview()
+                                if HoverPaintTarget and HoverPaintOriginals[HoverPaintTarget] then
+                                    local Saved = HoverPaintOriginals[HoverPaintTarget]
+                                    pcall(function() HoverPaintTarget[Saved.Property] = Saved.Color end)
+                                end
+                                HoverPaintTarget, HoverPaintTargetProperty = nil, nil
+                            end
+                            local function StopHoverPaint()
+                                HoverPaintEnabled = false
+                                RestoreHoverPaintPreview()
+                            end
+                            local HoverPaintButton, HoverPaintItems = Components:Button({Parent = OtherTabItems["PageContent"]})
+                            HoverPaintItems["Button"].Instance.Position = UDim2New(0, 8, 0, 175)
+                            HoverPaintItems["Button"].Instance.Size = UDim2New(1, -16, 0, 20)
+                            local HoverPaintHitbox
+                            local HoverPaintControl
+                            HoverPaintControl = HoverPaintButton:Add("Hover to paint: Off", function()
+                                if not Library.CopiedColor then
+                                    Library:Notification("Copy a color first", "Use Copy on a colorpicker, then enable hover painting", 3)
+                                    return
+                                end
+                                HoverPaintEnabled = not HoverPaintEnabled
+                                HoverPaintControl:SetText(HoverPaintEnabled and "Hover to paint: On" or "Hover to paint: Off")
+                                HoverPaintHitbox = HoverPaintItems["Button"].Instance:FindFirstChildWhichIsA("TextButton")
+                                if not HoverPaintEnabled then RestoreHoverPaintPreview() end
+                            end)
+                            Library:Connect(UserInputService.InputChanged, function(Input)
+                                if not HoverPaintEnabled or not Library.CopiedColor then return end
+                                if Input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+                                local MousePosition = UserInputService:GetMouseLocation()
+                                local Target
+                                for _, ThemeItem in ipairs(Library.ThemeItems) do
+                                    local Object = ThemeItem.Item
+                                    if Object and Object:IsA("GuiObject") and Object:IsDescendantOf(Library.Holder.Instance) and Object.Visible then
+                                        local Position, Size = Object.AbsolutePosition, Object.AbsoluteSize
+                                        if MousePosition.X >= Position.X and MousePosition.X <= Position.X + Size.X
+                                            and MousePosition.Y >= Position.Y and MousePosition.Y <= Position.Y + Size.Y then
+                                            for Property, ThemeValue in pairs(ThemeItem.Properties) do
+                                                if ThemeValue == "Accent" and (Property == "BackgroundColor3" or Property == "TextColor3" or Property == "ImageColor3") then
+                                                    Target = {Object = Object, Property = Property}
+                                                    break
+                                                end
+                                            end
+                                        end
+                                    end
+                                    if Target then break end
+                                end
+                                if HoverPaintTarget and (not Target or HoverPaintTarget ~= Target.Object or HoverPaintTargetProperty ~= Target.Property) then RestoreHoverPaintPreview() end
+                                if not Target then return end
+                                local Object, Property = Target.Object, Target.Property
+                                if HoverPaintTarget ~= Object or HoverPaintTargetProperty ~= Property then HoverPaintOriginals[Object] = {Property = Property, Color = Object[Property]} end
+                                HoverPaintTarget = Object
+                                HoverPaintTargetProperty = Property
+                                Object[Property] = Library.CopiedColor
+                            end, "ColorpickerHoverPaint")
+                            Library:Connect(UserInputService.InputBegan, function(Input, Processed)
+                                if not HoverPaintEnabled or Processed or Input.UserInputType ~= Enum.UserInputType.MouseButton1 or not HoverPaintTarget then return end
+                                local Saved = HoverPaintOriginals[HoverPaintTarget]
+                                if Saved then
+                                    local PaintedColor = Library.CopiedColor
+                                    local MousePosition = UserInputService:GetMouseLocation()
+                                    if HoverPaintHitbox then
+                                        local Position, Size = HoverPaintHitbox.AbsolutePosition, HoverPaintHitbox.AbsoluteSize
+                                        if MousePosition.X >= Position.X and MousePosition.X <= Position.X + Size.X
+                                            and MousePosition.Y >= Position.Y and MousePosition.Y <= Position.Y + Size.Y then return end
+                                    end
+                                    local PaintedObject, PaintedProperty = HoverPaintTarget, HoverPaintTargetProperty
+                                    StopHoverPaint()
+                                    Library:ChangeTheme("Accent", PaintedColor)
+                                    if HoverPaintOriginals[PaintedObject] then HoverPaintOriginals[PaintedObject] = nil end
+                                end
+                                HoverPaintTarget, HoverPaintTargetProperty = nil, nil
+                                HoverPaintControl:SetText("Hover to paint: Off")
+                            end, "ColorpickerHoverPaintClick")
 
                             local Stash = { }
 
@@ -8366,7 +8451,7 @@
 
                 function Library:CreateStreamproof()
                     if self.Streamproof then return self.Streamproof end
-                    local S = {Enabled = false, Mode = "Blank", PlayerText = "Player", ServerText = "Hidden"}
+                    local S = {Enabled = false, Players = true, Servers = true, Mode = "Blank", PlayerText = "Player", ServerText = "Hidden"}
                     local Watched, Connections, Tokens, Known, Buckets = {}, {}, {}, {}, {}
                     local Alive, Signature = true, ""
                     local Roots = {LocalPlayer:FindFirstChildOfClass("PlayerGui"), CoreGui}
@@ -8417,9 +8502,9 @@
                     function S:Sanitize(Text, Name, RichText)
                         if not self.Enabled then return Text end
                         local Key = tostring(Name or ""):lower():gsub("[^%a]", "")
-                        if Key == "region" or Key:find("serverlocation", 1, true) or Key:find("serverid", 1, true)
+                        if self.Servers and (Key == "region" or Key:find("serverlocation", 1, true) or Key:find("serverid", 1, true)
                             or Key:find("jobid", 1, true) or Key:find("serverregion", 1, true)
-                            or Key:find("servercountry", 1, true) or Key:find("serverip", 1, true) then
+                            or Key:find("servercountry", 1, true) or Key:find("serverip", 1, true)) then
                             return Replacement("Server", RichText)
                         end
                         local Lower, Output, Index = Text:lower(), {}, 1
@@ -8430,7 +8515,8 @@
                             end
                             local Match
                             for _, Token in ipairs(Buckets[Lower:sub(Index, Index)] or {}) do
-                                if Lower:sub(Index, Index + #Token.Text - 1) == Token.Text then
+                                if (Token.Kind == "Player" and self.Players or Token.Kind == "Server" and self.Servers)
+                                    and Lower:sub(Index, Index + #Token.Text - 1) == Token.Text then
                                     local Before, After = Lower:sub(Index - 1, Index - 1), Lower:sub(Index + #Token.Text, Index + #Token.Text)
                                     if (Index == 1 or not Before:match("[%w_]")) and (After == "" or not After:match("[%w_]")) then
                                         Match = Token; break
@@ -8763,6 +8849,10 @@
                             local PrivacySection = UIPage:Section({Name = "Spoofs", Side = 2})
                             PrivacySection:Toggle({Name = "Enabled", Flag = "StreamproofEnabled", Default = false,
                                 Callback = function(Value) Privacy:SetEnabled(Value) end})
+                            PrivacySection:Toggle({Name = "Player names and IDs", Flag = "StreamproofPlayers", Default = true,
+                                Callback = function(Value) Privacy.Players = Value; Privacy:Refresh() end})
+                            PrivacySection:Toggle({Name = "Server details", Flag = "StreamproofServers", Default = true,
+                                Callback = function(Value) Privacy.Servers = Value; Privacy:Refresh() end})
                             PrivacySection:Dropdown({Name = "Replacement mode", Flag = "StreamproofMode", Items = {"Blank", "Custom"}, Default = "Blank",
                                 Callback = function(Value) Privacy.Mode = Value == "Custom" and "Custom" or "Blank"; Privacy:Refresh() end})
                             PrivacySection:Textbox({Name = "Player replacement", Flag = "StreamproofPlayerText", Default = "Player", Finished = true,
@@ -11939,6 +12029,7 @@
                 local SprintPoseStates = setmetatable({}, {__mode = "k"})
                 local function UpdateSprintAnimation(State)
                     if Controller.Active and State and (Controller.Mods.NoSprintAnimation
+                        or Controller.UndergroundSprintSuppression and Controller.UndergroundSprintSuppression()
                         or Controller.Mods.SprintADS and State.isAiming)
                         and State.player == Player and State.character == Player.Character then
                         -- Weapon lowering is a separate pose blend, not the Sprint animation track.
@@ -12802,6 +12893,7 @@
                     Line.BorderSizePixel = 0
                     table.insert(Connections, ConnectScheduled(RunService.RenderStepped, function(Delta)
                         if Controller.Mods.AlwaysSprint or Controller.Mods.NoSprintAnimation or Controller.Mods.SprintADS or AutoSprintState
+                            or Controller.UndergroundSprintSuppression and Controller.UndergroundSprintSuppression()
                             or next(SprintAnimationWeights) then
                             if not LiveFPS or LiveFPS.character ~= Player.Character then DiscoverFPS() end
                             Controller:UpdateSprintMods(LiveFPS)
@@ -14889,7 +14981,7 @@
                 GhostMotion = nil
                 GhostPoseDirty = true
             end
-            local function BuildGhostPose(Motion, UndergroundPose)
+            local function BuildGhostPose(Motion, UndergroundActive, UndergroundPose)
                 local Root = GhostCharacter and GhostCharacter:FindFirstChild("HumanoidRootPart")
                 if not Root then return end
                 table.clear(GhostOffsets)
@@ -14907,14 +14999,20 @@
                 end
                 local function Transform(Joint)
                     if not Motion then return CFrame.identity end
+                    if UndergroundActive then
+                        Motion.UndergroundFrames = Motion.UndergroundFrames or {}
+                        if not Motion.UndergroundFrames[Joint] then
+                            Motion.UndergroundFrames[Joint] = UndergroundPose and Joint.Transform or CFrame.identity
+                        end
+                        return Motion.UndergroundFrames[Joint]
+                    end
                     if Motion.PoseFrames[Joint] then return Motion.PoseFrames[Joint] end
                     local Name = Joint.Name:lower()
                     local Arm = Joint.Part1.Name:find("Arm", 1, true) or Joint.Part1.Name:find("Hand", 1, true)
                     local Swing = math.sin(Motion.Phase) * Motion.Walk
                     local Left = Joint.Part1.Name:find("Left", 1, true) ~= nil
                     local Goal = CFrame.identity
-                    if UndergroundPose and not Arm then Goal = Joint.Transform
-                    elseif Name:find("shoulder", 1, true) then
+                    if Name:find("shoulder", 1, true) then
                         Goal = CFrame.Angles((Left and Swing or -Swing) * 0.35 - Motion.Jump * 0.25, 0, 0)
                     elseif Name:find("hip", 1, true) then
                         Goal = CFrame.Angles((Left and -Swing or Swing) * 0.55 - Motion.Jump * 0.2, 0, 0)
@@ -15081,10 +15179,11 @@
                 local Now = os.clock()
                 local Motion = GhostMotion
                 local UndergroundPose = UndergroundFrame and E.Underground.Pose
-                if not Motion or Motion.Underground ~= (UndergroundPose == true)
+                if not Motion or Motion.Underground ~= (UndergroundFrame ~= nil) or Motion.UndergroundPose ~= (UndergroundPose == true)
                     or (Motion.Frame.Position - Frame.Position).Magnitude > 20 then
                     Motion = {Frame = Frame, Time = Now, Phase = 0, Walk = 0, Jump = 0,
-                        Underground = UndergroundPose == true, Target = Frame, JointFrames = {}, PoseFrames = {}}
+                        Underground = UndergroundFrame ~= nil, UndergroundPose = UndergroundPose == true,
+                        Target = Frame, JointFrames = {}, PoseFrames = {}}
                     GhostMotion = Motion
                 end
                 local Delta = math.clamp(Now - Motion.Time, 0, 0.1)
@@ -15101,7 +15200,12 @@
                 local Airborne = Humanoid and Humanoid.FloorMaterial == Enum.Material.Air and not UndergroundFrame
                 Motion.Jump += ((Airborne and 1 or 0) - Motion.Jump) * Blend
                 Motion.Phase += Delta * (6 + math.min(Speed, 24) * 0.35)
-                BuildGhostPose(Motion, UndergroundPose)
+                local PoseTrack = UndergroundPose and UndergroundTrack or nil
+                local PoseTime = UndergroundPose and E.Underground.Freeze and UndergroundSeekTime or nil
+                if Motion.PoseTrack ~= PoseTrack or Motion.PoseTime ~= PoseTime then
+                    Motion.PoseTrack, Motion.PoseTime, Motion.UndergroundFrames = PoseTrack, PoseTime, nil
+                end
+                BuildGhostPose(Motion, UndergroundFrame ~= nil, UndergroundPose)
                 Frame = Motion.Frame
                 for Part, Copy in pairs(GhostParts) do
                     local Offset = GhostOffsets[Part]
@@ -15322,7 +15426,7 @@
                 E:UpdateWeather(Delta, Camera)
                 local S = E.Crosshair
                 local ScopeState = S.HideScoped and Combat:GetFPS()
-                local Scoped = ScopeState and ScopeState.isEquipped and ScopeState.Scope and ScopeState.Scope ~= ""
+                local Scoped = ScopeState and ScopeState.character == Player.Character and ScopeState.isEquipped
                     and (ScopeState.isAiming == true or ScopeState.RightMouseDown == true or ScopeState.ToolStance == "Aim")
                 local CrosshairPosition
                 if Camera and S.Enabled and not Scoped then
@@ -15789,6 +15893,16 @@
                 Placeholder = "Roblox animation asset ID", Callback = function(Value) Underground.AnimationId = Value end})
             Toggle(UndergroundSection, "Freeze at timestamp", "UndergroundFreeze", Underground, "Freeze")
             Slider(UndergroundSection, "Animation timestamp", "UndergroundFreezeTime", Underground, "FreezeTime", 0, 60, 0.05, " s")
+            UndergroundSection:Button():Add("Apply underground preset", function()
+                for _, Setting in ipairs({
+                    {"UndergroundPositionY", -3.5}, {"UndergroundRotationX", 67},
+                    {"UndergroundRotationY", -1}, {"UndergroundRotationZ", -22},
+                    {"UndergroundAnimationId", "616119360"}, {"UndergroundPose", true},
+                }) do
+                    local Set = Library.SetFlags[Setting[1]]
+                    if Set then Set(Setting[2]) end
+                end
+            end)
             local Yaw = AntiAimPage:Section({Name = "Fake yaw", Side = 3})
             BoundToggle(Yaw, "Enabled", "FakeYawEnabled", A, "Yaw", "FakeYawKeybind")
             local YawSlider
@@ -20357,6 +20471,9 @@
 
                 ReportLoadingProgress(0.56, "Preparing effects?")
                 local EffectsController = CreateEffectsController(Library, CombatController, UnloadCallbacks)
+                CombatController.UndergroundSprintSuppression = function()
+                    return EffectsController.Focused and EffectsController:IsUndergroundActive()
+                end
                 local CreateCustomAvatar = (function()
         return function(Library, Page, UnloadCallbacks)
             local Players = game:GetService("Players")
