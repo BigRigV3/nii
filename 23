@@ -28446,7 +28446,7 @@
                     Toggle(Bodies, "Skull icon", "DeadBodiesIcon", BodyController, "Icon")
                     Toggle(Bodies, "Hide empty bodies", "DeadBodiesHideEmpty", BodyController, "HideEmpty")
                     Toggle(Bodies, "Value filter", "DeadBodiesValueFilter", BodyController, "ValueFilter")
-                    Slider(Bodies, "Minimum value", "DeadBodiesMinValue", BodyController, "MinValue", 0, 10000000, 1000, "?")
+                    Slider(Bodies, "Minimum value", "DeadBodiesMinValue", BodyController, "MinValue", 0, 10000000, 1000, "")
                     Slider(Bodies, "Max distance", "DeadBodiesMaxDistance", BodyController, "MaxDistance", 10, 15000, 1, "m")
 
                     local Airdrops = OtherESPPage:Section({Name = "Airdrops", Side = 3})
